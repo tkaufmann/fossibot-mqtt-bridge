@@ -18,9 +18,20 @@ class ModbusCrc
      *
      * @param array $data Array of bytes to calculate CRC for
      * @return int CRC-16 value
+     * @throws \InvalidArgumentException If data is empty or contains invalid bytes
      */
     public static function calculate(array $data): int
     {
+        if (empty($data)) {
+            throw new \InvalidArgumentException('Data array cannot be empty');
+        }
+
+        foreach ($data as $index => $byte) {
+            if (!is_int($byte) || $byte < 0 || $byte > 255) {
+                throw new \InvalidArgumentException("Invalid byte value at index {$index}: {$byte}. Must be integer 0-255");
+            }
+        }
+
         $crc = 0xFFFF;
 
         foreach ($data as $byte) {
@@ -42,6 +53,7 @@ class ModbusCrc
      *
      * @param array $command Command bytes without CRC
      * @return array Command bytes with CRC appended (high byte first)
+     * @throws \InvalidArgumentException If command is empty or contains invalid bytes
      */
     public static function appendCrc(array $command): array
     {

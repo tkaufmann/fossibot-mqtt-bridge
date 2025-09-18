@@ -8,6 +8,10 @@ use Fossibot\Utils\ModbusCrc;
 
 /**
  * Read holding registers command (Modbus function 3).
+ *
+ * Implements Modbus function 3 to read multiple consecutive holding registers
+ * from the device. Used for retrieving device status, settings, and sensor data.
+ * Generates proper Modbus frame with CRC-16 checksum.
  */
 class ReadRegistersCommand extends Command
 {
@@ -17,7 +21,17 @@ class ReadRegistersCommand extends Command
     public function __construct(
         private readonly int $startRegister,
         private readonly int $count = 80
-    ) {}
+    ) {
+        if ($startRegister < 0 || $startRegister > 65535) {
+            throw new \InvalidArgumentException("Start register must be 0-65535, got: {$startRegister}");
+        }
+        if ($count < 1 || $count > 125) {
+            throw new \InvalidArgumentException("Count must be 1-125 (Modbus limit), got: {$count}");
+        }
+        if (($startRegister + $count) > 65536) {
+            throw new \InvalidArgumentException("Register range exceeds 65535: {$startRegister} + {$count}");
+        }
+    }
 
     public function getModbusBytes(): array
     {
