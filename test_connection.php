@@ -18,10 +18,10 @@ use Monolog\Handler\StreamHandler;
 $logger = new Logger('fossibot-test');
 $logger->pushHandler(new StreamHandler('php://stdout', Logger::DEBUG));
 
-function testStage1(): void {
+function testStage1And2(): void {
     global $logger;
 
-    $logger->info('=== Stage 1 Test: Anonymous Authorization ===');
+    $logger->info('=== Stage 1 & 2 Test: Anonymous Auth + User Login ===');
 
     try {
         $connection = new Connection(
@@ -35,14 +35,28 @@ function testStage1(): void {
 
         $connection->connect();
 
-        if ($connection->isConnected()) {
+        if ($connection->hasAnonymousToken()) {
             $logger->info('✅ Stage 1 SUCCESS: Anonymous token acquired');
         } else {
-            $logger->error('❌ Stage 1 FAILED: Connection not established');
+            $logger->error('❌ Stage 1 FAILED: No anonymous token');
         }
 
+        if ($connection->hasLoginToken()) {
+            $logger->info('✅ Stage 2 SUCCESS: Login token acquired');
+        } else {
+            $logger->error('❌ Stage 2 FAILED: No login token');
+        }
+
+        if ($connection->isConnected()) {
+            $logger->info('✅ FULL CONNECTION: All stages completed');
+        } else {
+            $logger->info('⚠️  PARTIAL CONNECTION: More stages needed');
+        }
+
+        $logger->info('Current Auth State: ' . $connection->getAuthState()->name);
+
     } catch (Exception $e) {
-        $logger->error('❌ Stage 1 EXCEPTION: ' . $e->getMessage());
+        $logger->error('❌ CONNECTION EXCEPTION: ' . $e->getMessage());
         $logger->debug('Stack trace: ' . $e->getTraceAsString());
     }
 }
@@ -54,12 +68,12 @@ function main(): void {
     $logger->info('API Endpoint: ' . Config::getApiEndpoint());
     $logger->info('MQTT Host: ' . Config::getMqttHost());
 
-    // Test Stage 1
-    testStage1();
+    // Test Stage 1 & 2
+    testStage1And2();
 
     $logger->info('📋 Test Summary:');
-    $logger->info('- Stage 1 (Anonymous Auth): Implemented');
-    $logger->info('- Stage 2 (Login): TODO');
+    $logger->info('- Stage 1 (Anonymous Auth): ✅ Implemented');
+    $logger->info('- Stage 2 (User Login): ✅ Implemented');
     $logger->info('- Stage 3 (MQTT Token): TODO');
     $logger->info('- Stage 4 (Device Discovery): TODO');
 }
