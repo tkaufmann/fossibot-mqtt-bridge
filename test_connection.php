@@ -18,10 +18,10 @@ use Monolog\Handler\StreamHandler;
 $logger = new Logger('fossibot-test');
 $logger->pushHandler(new StreamHandler('php://stdout', Logger::DEBUG));
 
-function testStage1And2And3(): void {
+function testStage1And2And3And4(): void {
     global $logger;
 
-    $logger->info('=== Stage 1, 2 & 3 Test: Anonymous Auth + User Login + MQTT Token ===');
+    $logger->info('=== Stage 1, 2, 3 & 4 Test: Full Connection Flow ===');
 
     try {
         $connection = new Connection(
@@ -53,6 +53,12 @@ function testStage1And2And3(): void {
             $logger->error('❌ Stage 3 FAILED: No MQTT token');
         }
 
+        if ($connection->hasMqttClient()) {
+            $logger->info('✅ Stage 4 SUCCESS: MQTT WebSocket connected');
+        } else {
+            $logger->error('❌ Stage 4 FAILED: No MQTT connection');
+        }
+
         if ($connection->isConnected()) {
             $logger->info('✅ FULL CONNECTION: All stages completed');
         } else {
@@ -74,14 +80,14 @@ function main(): void {
     $logger->info('API Endpoint: ' . Config::getApiEndpoint());
     $logger->info('MQTT Host: ' . Config::getMqttHost());
 
-    // Test Stage 1, 2 & 3
-    testStage1And2And3();
+    // Test Stage 1, 2, 3 & 4
+    testStage1And2And3And4();
 
     $logger->info('📋 Test Summary:');
     $logger->info('- Stage 1 (Anonymous Auth): ✅ Implemented');
     $logger->info('- Stage 2 (User Login): ✅ Implemented');
     $logger->info('- Stage 3 (MQTT Token): ✅ Implemented');
-    $logger->info('- Stage 4 (Device Discovery): TODO');
+    $logger->info('- Stage 4 (MQTT WebSocket): ✅ Implemented');
 }
 
 main();

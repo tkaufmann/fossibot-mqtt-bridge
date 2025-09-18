@@ -67,6 +67,7 @@ final class Connection {
 	private ?AnonymousToken $anonymousToken = NULL;
 	private ?LoginToken $loginToken = NULL;
 	private ?MqttToken $mqttToken = NULL;
+	private ?MqttWebSocketClient $mqttClient = NULL;
 	private string $deviceId;
 
 	public function __construct(
@@ -89,6 +90,9 @@ final class Connection {
 
 		$this->mqttToken = $this->s3_performMqttAuth();
 		$this->logger->info( 'Stage 3 completed: MQTT token acquired' );
+
+		$this->mqttClient = $this->s4_connectMqtt();
+		$this->logger->info( 'Stage 4 completed: MQTT WebSocket connected' );
 	}
 
 	public function isConnected(): bool {
@@ -111,6 +115,10 @@ final class Connection {
 		return $this->mqttToken !== NULL;
 	}
 
+	public function hasMqttClient(): bool {
+		return $this->mqttClient !== NULL && $this->mqttClient->isConnected();
+	}
+
 	public function isInStage1(): bool {
 		return $this->authState === AuthState::STAGE1_IN_PROGRESS;
 	}
@@ -121,6 +129,10 @@ final class Connection {
 
 	public function isInStage3(): bool {
 		return $this->authState === AuthState::STAGE3_IN_PROGRESS;
+	}
+
+	public function isInStage4(): bool {
+		return $this->authState === AuthState::STAGE4_IN_PROGRESS;
 	}
 
 	// Stage 1: Anonymous Authorization
@@ -618,6 +630,82 @@ final class Connection {
 		$this->authState = AuthState::FAILED;
 		$this->logger->error( 'Stage 3 failed', [ 'error' => $e->getMessage() ] );
 		throw $e;
+	}
+
+	// Stage 4: MQTT WebSocket Connection
+	private function s4_connectMqtt(): MqttWebSocketClient {
+		try {
+			$this->authState = AuthState::STAGE4_IN_PROGRESS;
+			$this->logger->debug( 'Starting Stage 4: MQTT WebSocket connection' );
+
+			$clientId = $this->s4_generateClientId();
+			$this->logger->debug( 'Generated MQTT client ID', [
+				'client_id' => $clientId,
+			] );
+
+			$client = new MqttWebSocketClient( $this->logger );
+
+			$this->logger->debug( 'Attempting MQTT WebSocket connection', [
+				'host' => Config::getMqttHost(),
+				'port' => 8083,
+				'username' => substr( $this->mqttToken->accessToken, 0, 20 ) . '...',
+				'client_id' => $clientId,
+			] );
+
+			$client->connect(
+				Config::getMqttHost(),        // Host
+				8083,                         // Port
+				$clientId,                    // Client ID
+				$this->mqttToken->accessToken, // Username = MQTT token
+				"helloyou"                    // Password = fixed constant
+			);
+
+			$this->logger->debug( 'MQTT WebSocket connection established successfully' );
+
+			$this->authState = AuthState::FULLY_CONNECTED;
+			$this->logger->debug( 'Stage 4 completed successfully - FULLY_CONNECTED' );
+
+			return $client;
+		} catch ( \Exception $e ) {
+			$this->s4_handleError( $e );
+		}
+	}
+
+	private function s4_generateClientId(): string {
+		// Generate shorter hex string for MQTT 23-char limit
+		// Format: c_{8-hex}_{6-timestamp} = 1+1+8+1+6 = 17 chars (within 23 limit)
+		$hexString = '';
+		for ( $i = 0; $i < 8; $i++ ) {
+			$hexString .= dechex( random_int( 0, 15 ) );
+		}
+
+		// Use last 6 digits of timestamp to keep it short
+		$timestampMs = (int) ( microtime( TRUE ) * 1000 );
+		$shortTimestamp = substr( (string) $timestampMs, -6 );
+
+		return "c_{$hexString}_{$shortTimestamp}";
+	}
+
+	private function s4_handleError( \Exception $e ): void {
+		$this->authState = AuthState::FAILED;
+
+		$errorType = match ( TRUE ) {
+			str_contains( $e->getMessage(), 'timeout' ) => 'MQTT WebSocket connection timeout',
+			str_contains( $e->getMessage(), 'resolve' ) => 'MQTT host DNS resolution failed',
+			str_contains( $e->getMessage(), 'WebSocket' ) => 'MQTT WebSocket handshake failed',
+			str_contains( $e->getMessage(), 'MQTT' ) => 'MQTT protocol negotiation failed',
+			str_contains( $e->getMessage(), 'InvalidArgument' ) => 'MQTT connection parameters invalid',
+			default => 'MQTT WebSocket connection failed',
+		};
+
+		$this->logger->error( 'Stage 4 failed', [
+			'error' => $e->getMessage(),
+			'error_type' => $errorType,
+			'error_class' => get_class( $e ),
+			'mqtt_host' => Config::getMqttHost(),
+		] );
+
+		throw new \RuntimeException( $errorType . ': ' . $e->getMessage(), 0, $e );
 	}
 
 	private function generateDeviceId(): string {
