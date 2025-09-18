@@ -10,6 +10,8 @@ use Fossibot\ValueObjects\AuthState;
 use Fossibot\ValueObjects\DeviceInfo;
 use Fossibot\ValueObjects\LoginRequest;
 use Fossibot\ValueObjects\LoginToken;
+use Fossibot\ValueObjects\MqttTokenRequest;
+use Fossibot\ValueObjects\MqttToken;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -64,6 +66,7 @@ final class Connection {
 	private AuthState $authState = AuthState::DISCONNECTED;
 	private ?AnonymousToken $anonymousToken = NULL;
 	private ?LoginToken $loginToken = NULL;
+	private ?MqttToken $mqttToken = NULL;
 	private string $deviceId;
 
 	public function __construct(
@@ -83,6 +86,9 @@ final class Connection {
 
 		$this->loginToken = $this->s2_performLogin();
 		$this->logger->info( 'Stage 2 completed: Login token acquired' );
+
+		$this->mqttToken = $this->s3_performMqttAuth();
+		$this->logger->info( 'Stage 3 completed: MQTT token acquired' );
 	}
 
 	public function isConnected(): bool {
@@ -101,12 +107,20 @@ final class Connection {
 		return $this->loginToken !== NULL;
 	}
 
+	public function hasMqttToken(): bool {
+		return $this->mqttToken !== NULL;
+	}
+
 	public function isInStage1(): bool {
 		return $this->authState === AuthState::STAGE1_IN_PROGRESS;
 	}
 
 	public function isInStage2(): bool {
 		return $this->authState === AuthState::STAGE2_IN_PROGRESS;
+	}
+
+	public function isInStage3(): bool {
+		return $this->authState === AuthState::STAGE3_IN_PROGRESS;
 	}
 
 	// Stage 1: Anonymous Authorization
@@ -440,6 +454,169 @@ final class Connection {
 	private function s2_handleError( \Exception $e ): void {
 		$this->authState = AuthState::FAILED;
 		$this->logger->error( 'Stage 2 failed', [ 'error' => $e->getMessage(), 'email' => $this->email ] );
+		throw $e;
+	}
+
+	// Stage 3: MQTT Token acquisition
+	private function s3_performMqttAuth(): MqttToken {
+		try {
+			$this->authState = AuthState::STAGE3_IN_PROGRESS;
+			$this->logger->debug( 'Starting Stage 3: MQTT Token acquisition' );
+
+			$request = $this->s3_generateRequest();
+			$this->logger->debug( 'Generated MQTT token request', [
+				'endpoint' => 'common/emqx.getAccessToken',
+			] );
+
+			$signature = $this->generateSignature( $request->toArray() );
+			$this->logger->debug( 'Generated MQTT token signature', [
+				'signature_length' => strlen( $signature ),
+			] );
+
+			$response = $this->s3_sendRequest( $request, $signature );
+			$token = $this->s3_parseResponse( $response );
+
+			$this->authState = AuthState::STAGE3_COMPLETED;
+			$this->logger->debug( 'Stage 3 completed successfully' );
+
+			return $token;
+		} catch ( \Exception $e ) {
+			$this->s3_handleError( $e );
+		}
+	}
+
+	private function s3_generateRequest(): MqttTokenRequest {
+		$deviceInfo = new DeviceInfo( deviceId: $this->deviceId );
+
+		$functionArgs = [
+			'$url' => 'common/emqx.getAccessToken',
+			'data' => [
+				'locale' => 'en',
+			],
+			'clientInfo' => $deviceInfo->toArray(),
+			'uniIdToken' => $this->loginToken->token,
+		];
+
+		$params = [
+			'functionTarget' => 'router',
+			'functionArgs' => $functionArgs,
+		];
+
+		return new MqttTokenRequest(
+			method: "serverless.function.runtime.invoke",
+			params: json_encode( $params ),
+			spaceId: Config::getSpaceId(),
+			timestamp: (int) ( microtime( TRUE ) * 1000 ),
+			token: $this->anonymousToken->accessToken
+		);
+	}
+
+	private function s3_sendRequest( MqttTokenRequest $request, string $signature ): array {
+		$headers = [
+			'Content-Type: application/json',
+			'x-serverless-sign: ' . $signature,
+		];
+
+		$ch = curl_init();
+		curl_setopt_array( $ch, [
+			CURLOPT_URL => Config::getApiEndpoint(),
+			CURLOPT_POST => TRUE,
+			CURLOPT_POSTFIELDS => json_encode( $request->toArray() ),
+			CURLOPT_HTTPHEADER => $headers,
+			CURLOPT_RETURNTRANSFER => TRUE,
+			CURLOPT_TIMEOUT => 15,
+			CURLOPT_HEADER => TRUE,
+		] );
+
+		$response = curl_exec( $ch );
+		$httpCode = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+		$headerSize = curl_getinfo( $ch, CURLINFO_HEADER_SIZE );
+
+		if ( curl_errno( $ch ) ) {
+			$error = curl_error( $ch );
+			$errorNum = curl_errno( $ch );
+			curl_close( $ch );
+
+			$errorMessage = match ( $errorNum ) {
+				CURLE_OPERATION_TIMEDOUT => "MQTT token request timed out after 15 seconds",
+				CURLE_COULDNT_RESOLVE_HOST => "Could not resolve API host for MQTT token",
+				CURLE_COULDNT_CONNECT => "Could not connect to API server for MQTT token",
+				CURLE_SSL_CONNECT_ERROR => "SSL connection failed during MQTT token request",
+				default => "MQTT token cURL error ({$errorNum}): {$error}",
+			};
+
+			$this->logger->error( 'MQTT token request failed', [
+				'error_number' => $errorNum,
+				'error_message' => $error,
+				'endpoint' => Config::getApiEndpoint(),
+			] );
+
+			throw new \RuntimeException( $errorMessage );
+		}
+
+		curl_close( $ch );
+
+		if ( $httpCode !== 200 ) {
+			$errorMessage = match ( $httpCode ) {
+				401 => "MQTT token request failed - invalid authentication",
+				403 => "MQTT token request forbidden - check token validity",
+				404 => "MQTT token endpoint not found",
+				429 => "Too many MQTT token requests - rate limited",
+				500 => "Server error during MQTT token request",
+				502, 503, 504 => "MQTT token service temporarily unavailable",
+				default => "MQTT token HTTP error: {$httpCode}",
+			};
+
+			$this->logger->error( 'MQTT token HTTP request failed', [
+				'http_code' => $httpCode,
+				'endpoint' => Config::getApiEndpoint(),
+			] );
+
+			throw new \RuntimeException( $errorMessage );
+		}
+
+		$responseHeaders = substr( $response, 0, $headerSize );
+		$responseBody = substr( $response, $headerSize );
+
+		$this->logger->debug( 'MQTT Token Response Headers:', [ 'headers' => $responseHeaders ] );
+		$this->logger->debug( 'MQTT Token Response Body:', [ 'body' => $responseBody ] );
+
+		$decoded = json_decode( $responseBody, TRUE );
+		if ( json_last_error() !== JSON_ERROR_NONE ) {
+			throw new \RuntimeException( "MQTT token JSON decode error: " . json_last_error_msg() );
+		}
+
+		return $decoded;
+	}
+
+	private function s3_parseResponse( array $response ): MqttToken {
+		if ( ! isset( $response['data'] ) ) {
+			$this->logger->error( 'Invalid MQTT token response structure', [
+				'response' => $response,
+			] );
+			throw new \RuntimeException( "MQTT token response missing 'data' field" );
+		}
+
+		if ( ! isset( $response['data']['access_token'] ) ) {
+			$this->logger->error( 'Missing MQTT access_token in response', [
+				'response_data' => $response['data'],
+			] );
+			throw new \RuntimeException( "MQTT token response missing access_token" );
+		}
+
+		$token = $response['data']['access_token'];
+		$this->logger->debug( 'MQTT Token acquired:', [
+			'token_length' => strlen( $token ),
+			'token_prefix' => substr( $token, 0, 20 ) . '...',
+			'full_response' => $response,
+		] );
+
+		return new MqttToken( $token );
+	}
+
+	private function s3_handleError( \Exception $e ): void {
+		$this->authState = AuthState::FAILED;
+		$this->logger->error( 'Stage 3 failed', [ 'error' => $e->getMessage() ] );
 		throw $e;
 	}
 

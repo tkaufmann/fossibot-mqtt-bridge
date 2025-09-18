@@ -1,17 +1,16 @@
 <?php
 
-declare(strict_types=1);
-
-/**
- * ABOUTME: Value object representing an MQTT authentication token from Stage 3.
- */
+declare( strict_types=1 );
 
 namespace Fossibot\ValueObjects;
 
-final readonly class MqttToken
-{
-    public function __construct(
-        public string $token
-    ) {
-    }
+/**
+ * Value object representing an MQTT authentication token from Stage 3.
+ */
+final readonly class MqttToken {
+
+	public function __construct(
+		public string $accessToken
+	) {
+	}
 }
