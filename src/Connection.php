@@ -12,6 +12,8 @@ use Fossibot\ValueObjects\LoginRequest;
 use Fossibot\ValueObjects\LoginToken;
 use Fossibot\ValueObjects\MqttTokenRequest;
 use Fossibot\ValueObjects\MqttToken;
+use Fossibot\Device\Device;
+use Fossibot\ValueObjects\DeviceListRequest;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -62,12 +64,16 @@ use Psr\Log\NullLogger;
  */
 final class Connection {
 
+	private const DEFAULT_PAGE_SIZE = 100;
+	private const API_REQUEST_TIMEOUT = 15;
+
 	private LoggerInterface $logger;
 	private AuthState $authState = AuthState::DISCONNECTED;
 	private ?AnonymousToken $anonymousToken = NULL;
 	private ?LoginToken $loginToken = NULL;
 	private ?MqttToken $mqttToken = NULL;
 	private ?MqttWebSocketClient $mqttClient = NULL;
+	private array $devices = []; // Device[]
 	private string $deviceId;
 
 	public function __construct(
@@ -118,6 +124,11 @@ final class Connection {
 	public function hasMqttClient(): bool {
 		return $this->mqttClient !== NULL && $this->mqttClient->isConnected();
 	}
+
+	public function hasDevices(): bool {
+		return !empty( $this->devices );
+	}
+
 
 	public function isInStage1(): bool {
 		return $this->authState === AuthState::STAGE1_IN_PROGRESS;
@@ -706,6 +717,164 @@ final class Connection {
 		] );
 
 		throw new \RuntimeException( $errorType . ': ' . $e->getMessage(), 0, $e );
+	}
+
+	/**
+	 * Retrieve list of devices associated with user account.
+	 *
+	 * @return Device[] Array of Device objects
+	 * @throws \RuntimeException If connection not established or API fails
+	 * @throws \InvalidArgumentException If request parameters are invalid
+	 */
+	public function getDevices(): array {
+		if ( !$this->isConnected() ) {
+			throw new \RuntimeException( 'Cannot get devices: Connection not established. Call connect() first.' );
+		}
+
+		try {
+			$this->logger->debug( 'Starting device list retrieval' );
+
+			$requestData = $this->buildDeviceListRequest();
+			$response = $this->sendApiRequest( $requestData );
+			$devices = $this->parseDeviceListResponse( $response );
+
+			$this->logger->debug( 'Device list retrieved successfully', [
+				'device_count' => count( $devices ),
+				'devices' => array_map( fn( Device $d ) => $d->deviceName, $devices ),
+			] );
+
+			$this->devices = $devices; // Cache the devices
+			return $devices;
+		} catch ( \InvalidArgumentException $e ) {
+			$this->logger->error( 'Invalid device list request parameters', [
+				'error' => $e->getMessage(),
+			] );
+			throw $e;
+		} catch ( \RuntimeException $e ) {
+			$this->handleDeviceListError( $e );
+		}
+	}
+
+	private function buildDeviceListRequest(): array {
+		$deviceListRequest = new DeviceListRequest();
+		$clientInfo = new DeviceInfo( deviceId: $this->deviceId );
+
+		$functionArgs = $deviceListRequest->toFunctionArgs( $clientInfo, $this->loginToken->token );
+		$params = json_encode( [
+			'functionTarget' => 'router',
+			'functionArgs' => $functionArgs,
+		] );
+
+		$this->logger->debug( 'Building device list request', [
+			'url' => $functionArgs['$url'],
+			'page_size' => $functionArgs['data']['pageSize'],
+		] );
+
+		return [
+			'method' => 'serverless.function.runtime.invoke',
+			'params' => $params,
+			'spaceId' => Config::getSpaceId(),
+			'timestamp' => (int) ( microtime( TRUE ) * 1000 ),
+			'token' => $this->anonymousToken->accessToken,
+		];
+	}
+
+	/**
+	 * Parse device list API response into Device objects.
+	 *
+	 * @param string $response Raw JSON response from API
+	 * @return Device[] Array of Device objects
+	 * @throws \RuntimeException If response format is invalid
+	 */
+	private function parseDeviceListResponse( string $response ): array {
+		$responseData = json_decode( $response, TRUE );
+
+		if ( json_last_error() !== JSON_ERROR_NONE ) {
+			throw new \RuntimeException( 'Invalid JSON in device list response: ' . json_last_error_msg() );
+		}
+
+		if ( !isset( $responseData['data'] ) ) {
+			throw new \RuntimeException( 'Device list response missing data field' );
+		}
+
+		$rows = $responseData['data']['rows'] ?? [];
+		if ( empty( $rows ) ) {
+			$this->logger->warning( 'No devices found in account' );
+			return [];
+		}
+
+		$devices = [];
+		foreach ( $rows as $deviceData ) {
+			try {
+				$devices[] = Device::fromApiResponse( $deviceData );
+			} catch ( \Exception $e ) {
+				$this->logger->warning( 'Failed to parse device data', [
+					'device_data' => $deviceData,
+					'error' => $e->getMessage(),
+				] );
+				// Continue with other devices
+			}
+		}
+
+		return $devices;
+	}
+
+	/**
+	 * Handle device list retrieval errors with specific error categorization.
+	 *
+	 * @param \Exception $e The caught exception
+	 * @throws \RuntimeException Always throws with categorized error message
+	 * @return never
+	 */
+	private function handleDeviceListError( \Exception $e ): never {
+		$errorType = match ( TRUE ) {
+			str_contains( $e->getMessage(), 'timeout' ) => 'Device list request timeout',
+			str_contains( $e->getMessage(), 'resolve' ) => 'DNS resolution failed',
+			str_contains( $e->getMessage(), 'HTTP' ) => 'Device list HTTP error',
+			str_contains( $e->getMessage(), 'JSON' ) => 'Device list response parsing failed',
+			str_contains( $e->getMessage(), 'Connection not established' ) => 'Authentication required',
+			default => 'Device list retrieval failed',
+		};
+
+		$this->logger->error( 'Device list retrieval failed', [
+			'error' => $e->getMessage(),
+			'error_type' => $errorType,
+			'error_class' => get_class( $e ),
+		] );
+
+		throw new \RuntimeException( $errorType . ': ' . $e->getMessage(), 0, $e );
+	}
+
+	private function sendApiRequest( array $data ): string {
+		$signature = $this->generateSignature( $data );
+
+		$ch = curl_init();
+		curl_setopt_array( $ch, [
+			CURLOPT_URL => Config::getApiEndpoint(),
+			CURLOPT_POST => TRUE,
+			CURLOPT_POSTFIELDS => json_encode( $data ),
+			CURLOPT_RETURNTRANSFER => TRUE,
+			CURLOPT_TIMEOUT => self::API_REQUEST_TIMEOUT,
+			CURLOPT_HTTPHEADER => [
+				'Content-Type: application/json',
+				'x-serverless-sign: ' . $signature,
+			],
+		] );
+
+		$response = curl_exec( $ch );
+		$httpCode = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+		$curlError = curl_error( $ch );
+		curl_close( $ch );
+
+		if ( $response === FALSE ) {
+			throw new \RuntimeException( "API request failed: {$curlError}" );
+		}
+
+		if ( $httpCode !== 200 ) {
+			throw new \RuntimeException( "API request HTTP error: {$httpCode}" );
+		}
+
+		return $response;
 	}
 
 	private function generateDeviceId(): string {
