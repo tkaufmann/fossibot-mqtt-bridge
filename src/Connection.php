@@ -14,6 +14,7 @@ use Fossibot\ValueObjects\MqttTokenRequest;
 use Fossibot\ValueObjects\MqttToken;
 use Fossibot\Device\Device;
 use Fossibot\ValueObjects\DeviceListRequest;
+use Fossibot\Commands\Command;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -875,6 +876,78 @@ final class Connection {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Send a command to a device via MQTT.
+	 *
+	 * Converts the command to binary payload and publishes it to the device's
+	 * MQTT topic. Validates connection state before sending.
+	 *
+	 * @param string $macAddress Device MAC address without colons (12 hex chars)
+	 * @param Command $command Command to execute on the device
+	 * @throws \RuntimeException If MQTT client not connected or send fails
+	 * @throws \InvalidArgumentException If MAC address is empty
+	 */
+	public function sendCommand(string $macAddress, Command $command): void
+	{
+		if (!$this->hasMqttClient()) {
+			throw new \RuntimeException('Cannot send command: MQTT client not connected. Call connect() first.');
+		}
+
+		if (empty($macAddress)) {
+			throw new \InvalidArgumentException('MAC address cannot be empty');
+		}
+
+		$topic = $macAddress . '/client/request/data';
+		$payload = $command->getModbusBytes();
+
+		$this->logger->info('Sending MQTT command', [
+			'mac_address' => $macAddress,
+			'topic' => $topic,
+			'command_description' => $command->getDescription(),
+			'target_register' => $command->getTargetRegister(),
+			'response_type' => $command->getResponseType()->name,
+			'payload_hex' => implode(' ', array_map(fn($b) => sprintf('%02X', $b), $payload)),
+			'payload_size' => count($payload)
+		]);
+
+		try {
+			// Convert byte array to binary string for MQTT
+			$binaryPayload = '';
+			foreach ($payload as $byte) {
+				$binaryPayload .= chr($byte);
+			}
+
+			// Publish to MQTT
+			$this->mqttClient->publish($topic, $binaryPayload);
+
+			$this->logger->debug('MQTT command sent successfully', [
+				'mac_address' => $macAddress,
+				'topic' => $topic,
+				'command_description' => $command->getDescription()
+			]);
+
+			// TODO: Implement response handling based on CommandResponseType
+			// if ($command->getResponseType() === CommandResponseType::IMMEDIATE) {
+			//     $this->waitForResponse($macAddress, $command, 5); // 5s timeout
+			// }
+
+		} catch (\Exception $e) {
+			$this->logger->error('MQTT command send failed', [
+				'mac_address' => $macAddress,
+				'topic' => $topic,
+				'command_description' => $command->getDescription(),
+				'error' => $e->getMessage(),
+				'error_class' => get_class($e)
+			]);
+
+			throw new \RuntimeException(
+				"Failed to send command via MQTT: {$e->getMessage()}",
+				0,
+				$e
+			);
+		}
 	}
 
 	private function generateDeviceId(): string {
