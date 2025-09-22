@@ -741,7 +741,7 @@ final class Connection {
 
 			$this->logger->debug( 'Device list retrieved successfully', [
 				'device_count' => count( $devices ),
-				'devices' => array_map( fn( Device $d ) => $d->deviceName, $devices ),
+				'devices' => array_map( fn( Device $d ) => $d->getDeviceName(), $devices ),
 			] );
 
 			$this->devices = $devices; // Cache the devices

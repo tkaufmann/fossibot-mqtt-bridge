@@ -27,27 +27,22 @@ function testQueueWithoutConnection(): void {
 
     echo "=== Testing Queue System Without Real Connection ===\n";
 
-    $queueManager = new QueueManager($logger);
-
-    // Create mock MAC addresses
-    $testMacs = ['aabbccddeeff', '112233445566'];
-
-    // Create fake connection for testing
-    $mockConnection = new Connection('test@example.com', 'password', $logger);
-    $queueManager->registerConnection($mockConnection, $testMacs);
-
-    echo "Queue Manager Status:\n";
-    print_r($queueManager->getStatus());
+    // Test ConnectionQueue directly without real connection (fallback mode)
+    $queue = new \Fossibot\Queue\ConnectionQueue($logger, null);
 
     // Test commands
     $usbOn = UsbOutputCommand::enable();
     $acOff = AcOutputCommand::disable();
 
-    echo "\nExecuting test commands...\n";
-    $queueManager->executeCommand('aabbccddeeff', $usbOn);
-    $queueManager->executeCommand('112233445566', $acOff);
+    echo "Testing ConnectionQueue fallback mode (no real MQTT)...\n";
+    echo "USB ON Command: " . $usbOn->getDescription() . "\n";
+    echo "AC OFF Command: " . $acOff->getDescription() . "\n";
 
-    echo "✅ Queue system test completed\n\n";
+    $queue->enqueue('aabbccddeeff', $usbOn);
+    $queue->enqueue('112233445566', $acOff);
+
+    echo "Queue size: " . $queue->getQueueSize() . "\n";
+    echo "✅ Queue system test completed (fallback mode)\n\n";
 }
 
 function testQueueWithRealConnection(): void {
@@ -147,7 +142,12 @@ function main(): void {
 
     // Ask user if they want to test with real device
     echo "Do you want to test with a real device? This will send actual USB commands! (y/N): ";
-    $input = trim(fgets(STDIN));
+    $input = fgets(STDIN);
+    if ($input === false) {
+        $input = 'n';
+    } else {
+        $input = trim($input);
+    }
 
     if (strtolower($input) === 'y' || strtolower($input) === 'yes') {
         testQueueWithRealConnection();

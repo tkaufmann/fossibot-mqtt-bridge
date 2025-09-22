@@ -244,4 +244,73 @@ final class MqttWebSocketClient {
 
 		throw new \RuntimeException( "MQTT WebSocket connection failed: {$errorType} - {$e->getMessage()}", 0, $e );
 	}
+
+	/**
+	 * Publish a message to an MQTT topic.
+	 *
+	 * @param string $topic MQTT topic to publish to
+	 * @param string $payload Binary payload to send
+	 * @throws \RuntimeException If not connected or publish fails
+	 */
+	public function publish( string $topic, string $payload ): void {
+		if ( ! $this->connected || $this->websocket === NULL ) {
+			throw new \RuntimeException( 'Cannot publish: MQTT client not connected' );
+		}
+
+		if ( empty( $topic ) ) {
+			throw new \InvalidArgumentException( 'MQTT topic cannot be empty' );
+		}
+
+		try {
+			$packet = $this->buildPublishPacket( $topic, $payload );
+
+			$this->logger->debug( 'Sending MQTT PUBLISH packet', [
+				'topic' => $topic,
+				'payload_size' => strlen( $payload ),
+				'packet_size' => strlen( $packet ),
+			] );
+
+			$this->websocket->send( $packet, 'binary' );
+
+			$this->logger->debug( 'MQTT PUBLISH sent successfully', [
+				'topic' => $topic,
+				'payload_size' => strlen( $payload ),
+			] );
+
+		} catch ( \Exception $e ) {
+			$this->logger->error( 'MQTT publish failed', [
+				'topic' => $topic,
+				'payload_size' => strlen( $payload ),
+				'error' => $e->getMessage(),
+				'error_class' => get_class( $e ),
+			] );
+
+			throw new \RuntimeException( "MQTT publish failed: {$e->getMessage()}", 0, $e );
+		}
+	}
+
+	/**
+	 * Build MQTT PUBLISH packet.
+	 *
+	 * @param string $topic MQTT topic
+	 * @param string $payload Message payload
+	 * @return string Binary MQTT packet
+	 */
+	private function buildPublishPacket( string $topic, string $payload ): string {
+		$packet = '';
+
+		// Variable Header: Topic Name
+		$packet .= pack( 'n', strlen( $topic ) ); // Topic length (2 bytes)
+		$packet .= $topic;                        // Topic string
+
+		// Payload
+		$packet .= $payload;
+
+		// Fixed Header
+		$fixedHeader = chr( 0x30 ); // PUBLISH, QoS 0, No retain, No dup
+		$fixedHeader .= $this->encodeRemainingLength( strlen( $packet ) );
+
+		return $fixedHeader . $packet;
+	}
+
 }
