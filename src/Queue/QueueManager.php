@@ -6,6 +6,8 @@ namespace Fossibot\Queue;
 
 use Fossibot\Commands\Command;
 use Fossibot\Connection;
+use Fossibot\Contracts\CommandExecutor;
+use Fossibot\Device\Device;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -16,8 +18,10 @@ use Psr\Log\NullLogger;
  * separate queues for each connection and mapping device MAC addresses to
  * the correct connection instances.
  */
-class QueueManager
+class QueueManager implements CommandExecutor
 {
+    private static ?QueueManager $instance = null;
+
     private array $connectionQueues = []; // connectionId -> ConnectionQueue
     private array $macToConnection = []; // macAddress -> Connection
     private LoggerInterface $logger;
@@ -25,6 +29,31 @@ class QueueManager
     public function __construct(?LoggerInterface $logger = null)
     {
         $this->logger = $logger ?? new NullLogger();
+    }
+
+    /**
+     * Get the singleton instance of QueueManager.
+     *
+     * @param LoggerInterface|null $logger Optional logger (only used on first call)
+     * @return QueueManager Singleton instance
+     */
+    public static function getInstance(?LoggerInterface $logger = null): QueueManager
+    {
+        if (self::$instance === null) {
+            self::$instance = new self($logger);
+        }
+
+        return self::$instance;
+    }
+
+    /**
+     * Reset singleton instance (mainly for testing).
+     *
+     * @internal This method should only be used in tests
+     */
+    public static function resetInstance(): void
+    {
+        self::$instance = null;
     }
 
     /**
@@ -93,6 +122,22 @@ class QueueManager
         ]);
 
         $queue->enqueue($macAddress, $command);
+    }
+
+    /**
+     * Execute a command on a specific device (CommandExecutor interface).
+     *
+     * This method implements the CommandExecutor interface and delegates
+     * to the existing executeCommand method for backwards compatibility.
+     *
+     * @param string $deviceId Device MAC address without colons
+     * @param Command $command Command to execute
+     * @throws \RuntimeException If no connection found for device ID
+     * @throws \InvalidArgumentException If device ID is empty or invalid format (forwarded from queue)
+     */
+    public function execute(string $deviceId, Command $command): void
+    {
+        $this->executeCommand($deviceId, $command);
     }
 
     /**
@@ -178,5 +223,71 @@ class QueueManager
     public function getRegisteredMacs(): array
     {
         return array_keys($this->macToConnection);
+    }
+
+    /**
+     * Add a new connection with automatic authentication and device discovery.
+     *
+     * Creates a new Connection, performs full authentication flow (stages 1-4),
+     * discovers devices, and registers them with the queue manager.
+     *
+     * @param string $email User email for authentication
+     * @param string $password User password for authentication
+     * @throws \RuntimeException If connection or authentication fails
+     * @throws \InvalidArgumentException If email or password is empty
+     */
+    public function addConnection(string $email, string $password): void
+    {
+        if (empty($email)) {
+            throw new \InvalidArgumentException('Email cannot be empty');
+        }
+
+        if (empty($password)) {
+            throw new \InvalidArgumentException('Password cannot be empty');
+        }
+
+        $this->logger->info('Adding new connection with authentication', [
+            'email' => $email
+        ]);
+
+        try {
+            // Create and authenticate connection
+            $connection = new \Fossibot\Connection($email, $password, $this->logger);
+            $connection->connect();
+
+            // Get devices for this connection
+            $devices = $connection->getDevices();
+
+            if (empty($devices)) {
+                $this->logger->warning('No devices found for connection', [
+                    'email' => $email
+                ]);
+                return;
+            }
+
+            // Extract MAC addresses
+            $macAddresses = [];
+            foreach ($devices as $device) {
+                $macAddresses[] = $device->getMqttId();
+            }
+
+            // Register connection with discovered devices
+            $this->registerConnection($connection, $macAddresses);
+
+            $this->logger->info('Connection added successfully', [
+                'email' => $email,
+                'device_count' => count($devices),
+                'mac_addresses' => $macAddresses
+            ]);
+
+        } catch (\Exception $e) {
+            $this->logger->error('Failed to add connection', [
+                'email' => $email,
+                'error' => $e->getMessage(),
+                'error_class' => get_class($e)
+            ]);
+
+            throw new \RuntimeException("Failed to add connection for {$email}: {$e->getMessage()}", 0, $e);
+        }
     }
 }
