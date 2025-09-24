@@ -197,51 +197,86 @@ REG_DISABLE_USB = [17, 6, 0, 24, 0, 0, <crc>]       # Disable USB output
 
 ### Command Response Patterns
 
-**⚠️ CRITICAL**: Different command types have different response behaviors!
+**⚠️ CRITICAL**: There are exactly TWO different response behaviors based on command type!
 
-#### Immediate Response Commands (Output Controls)
-These commands trigger instant device responses via `{device_mac}/device/response/client/04`:
+#### Pattern 1: Output Control Commands (Immediate Response)
+These commands trigger **instant device responses** via dedicated topic:
 
+**Commands:**
+- USB Output ON/OFF (Register 24)
+- DC Output ON/OFF (Register 25)
+- AC Output ON/OFF (Register 26)
+- LED Mode Control (Register 27: OFF=0, ON=1, SOS=2, Flash=3)
+
+**Response Behavior:**
 ```python
-# Commands that respond immediately:
-- USB Output (Register 24) → Bit 6 in Register 41 bitfield
-- DC Output (Register 25)  → Bit 5 in Register 41 bitfield
-- AC Output (Register 26)  → Bit 4 in Register 41 bitfield
-- LED Output (Register 27) → Bit 3 in Register 41 bitfield
+# ✅ IMMEDIATE Response Topic:
+"{device_mac}/device/response/client/04"
 
-# Example: Send "Enable USB" → Device immediately publishes updated bitfield
+# ✅ Response Data:
+- 81 registers returned within seconds
+- Register 41 contains output status bitfield
+- USB State = Bit 6, DC = Bit 5, AC = Bit 4, LED = Bit 3
+
+# ✅ Example Flow:
+send_command(REG_ENABLE_USB)  # Send USB ON command
+# → Device immediately publishes to /client/04
+# → Register 41 bit 6 = 1 (USB now ON)
 ```
 
-#### Delayed/No Response Commands (Settings)
-These commands do NOT trigger immediate responses:
+#### Pattern 2: Settings Commands (Delayed/No Immediate Response)
+These commands do **NOT trigger immediate responses**:
 
+**Commands:**
+- Maximum Charging Current (Register 20): Range 1-20 Amperes
+- Discharge Lower Limit (Register 66): Range 0-1000 (tenths, 100=10.0%)
+- AC Charging Upper Limit (Register 67): Range 0-1000 (tenths, 1000=100.0%)
+- AC Silent Charging (Register 57): Boolean 1=enabled, 0=disabled
+- USB Standby Time (Register 59): Values 0,3,5,10,30 minutes
+- AC Standby Time (Register 60): Values 0,480,960,1440 minutes
+- DC Standby Time (Register 61): Values 0,480,960,1440 minutes
+- Screen Rest Time (Register 62): Values 0,180,300,600,1800 seconds
+- Sleep Time (Register 68): Values 5,10,30,480 minutes
+
+**Response Behavior:**
 ```python
-# Commands that may not respond immediately:
-- Maximum Charging Current (Register 20) → Only visible in periodic updates
-- AC Silent Charging (Register 57)       → Only visible in periodic updates
-- Standby Times (Registers 59, 60)       → Only visible in periodic updates
+# ❌ NO Immediate Response
+# ✅ DELAYED Response Topic:
+"{device_mac}/device/response/client/data"
 
-# These values appear in {device_mac}/device/response/client/data topic
-# or during next periodic status update (every ~30 seconds)
+# ✅ Response Data:
+- Settings values appear in next periodic update (~30 seconds)
+- OR when explicitly requesting data with REG_REQUEST_SETTINGS
+- Same 81 registers, but focus on registers 20, 57, 59-68
+
+# ⚠️ DANGER: Never set Register 68 to 0 - bricks device!
+
+# ✅ Example Flow:
+send_command(set_charging_current, 4)  # Set 4A charging
+# → Command sent successfully
+# → NO immediate response
+# → Value appears in /client/data topic during next update
 ```
 
-#### Implementation Impact
+#### Implementation Patterns
 ```python
-async def send_output_command(device_id, command):
+def handle_output_command(device_id, command):
     """Output commands - expect immediate feedback"""
     client.publish(f"{device_id}/client/request/data", command_bytes)
+    # Wait for response on {device_id}/device/response/client/04
+    # Parse Register 41 bitfield for new output states
 
-    # Wait for immediate response on client/04 topic
-    await wait_for_topic_update(f"{device_id}/device/response/client/04", timeout=5)
-    return parse_bitfield_response()
-
-async def send_settings_command(device_id, command):
+def handle_settings_command(device_id, command):
     """Settings commands - no immediate feedback"""
     client.publish(f"{device_id}/client/request/data", command_bytes)
+    # Return success immediately
+    # New values will appear in {device_id}/device/response/client/data
 
-    # Don't wait for immediate response - settings take effect gradually
-    # Value will appear in next periodic update or explicit data request
-    return True  # Command sent successfully
+# Topic Subscription Required:
+subscribe_topics = [
+    f"{device_id}/device/response/client/+",  # Catches both /04 and /data
+    f"{device_id}/device/response/state"      # General state updates
+]
 ```
 
 ### Data Parsing
@@ -281,14 +316,31 @@ def parse_device_data(registers):
 
 ### Critical Implementation Notes
 
-1. **Device ID**: Generate new 32-char hex string for each session
+1. **Device ID**: Generate unique 32-char hex string per session
    ```python
    # ❌ WRONG: Reusing static device ID
    device_id = "12345678901234567890123456789012"
 
-   # ✅ RIGHT: Generate new random ID each time
-   device_id = "".join(random.choice("0123456789ABCDEF") for _ in range(32))
+   # ❌ SUBOPTIMAL: New ID for every API call (current code behavior)
+   def call_api():
+       device_id = "".join(random.choice("0123456789ABCDEF") for _ in range(32))
+       # This generates new ID for auth, login, mqtt token, device list...
+
+   # ✅ BETTER: Generate once per session, reuse consistently
+   class APIClient:
+       def __init__(self):
+           self._device_id = "".join(random.choice("0123456789ABCDEF") for _ in range(32))
+
+       def get_device_info(self):
+           return {"DEVICEID": self._device_id, "deviceId": self._device_id, ...}
    ```
+
+   **Rationale**: Real mobile apps maintain consistent device IDs across API calls within a session. Constantly changing IDs could potentially:
+   - Trigger server-side rate limiting or security flags
+   - Prevent proper session tracking or caching
+   - Appear as suspicious automated behavior
+
+   Current implementation works but caching the device ID per session is more authentic.
 
 2. **Signature**: Sort keys alphabetically, filter empty values
    ```python

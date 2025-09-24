@@ -15,6 +15,8 @@ use Fossibot\ValueObjects\MqttToken;
 use Fossibot\Device\Device;
 use Fossibot\ValueObjects\DeviceListRequest;
 use Fossibot\Commands\Command;
+use Fossibot\Commands\CommandResponseType;
+use Fossibot\Contracts\ResponseListener;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -674,6 +676,14 @@ final class Connection {
 
 			$this->logger->debug( 'MQTT WebSocket connection established successfully' );
 
+			// First discover devices (set FULLY_CONNECTED temporarily for device discovery)
+			$this->authState = AuthState::FULLY_CONNECTED;
+			$devices = $this->getDevices();
+			$this->logger->debug( 'Device discovery completed', ['device_count' => count($devices)] );
+
+			// Setup response subscriptions for all discovered devices
+			$this->setupResponseSubscriptions($client);
+
 			$this->authState = AuthState::FULLY_CONNECTED;
 			$this->logger->debug( 'Stage 4 completed successfully - FULLY_CONNECTED' );
 
@@ -718,6 +728,337 @@ final class Connection {
 		] );
 
 		throw new \RuntimeException( $errorType . ': ' . $e->getMessage(), 0, $e );
+	}
+
+	/**
+	 * Setup MQTT response subscriptions for all devices.
+	 *
+	 * Subscribes to response topics as specified in SYSTEM.md:
+	 * - {device_mac}/device/response/client/+ (catches /04 and /data)
+	 * - {device_mac}/device/response/state
+	 *
+	 * @param MqttWebSocketClient $client Connected MQTT client
+	 * @throws \RuntimeException If subscription fails
+	 */
+	private function setupResponseSubscriptions(MqttWebSocketClient $client): void
+	{
+		try {
+			$devices = $this->getDevices();
+			$subscriptionCount = 0;
+
+			foreach ($devices as $device) {
+				$mac = $device->getMqttId();
+				$responseTopics = [
+					"{$mac}/device/response/client/+",    // Catches both /04 and /data
+					// NOTE: Temporarily removed state subscription due to MQTT race condition
+					// TODO: Fix MQTT parser buffer handling and re-enable state subscription
+				];
+
+				foreach ($responseTopics as $topic) {
+					$client->subscribe($topic);
+					$subscriptionCount++;
+					$this->logger->debug('Subscribed to response topic', [
+						'topic' => $topic,
+						'device_mac' => $mac
+					]);
+				}
+			}
+
+			// Setup message callback for response handling
+			$this->setupResponseCallback($client);
+
+			$this->logger->info('MQTT response subscriptions setup completed', [
+				'device_count' => count($devices),
+				'subscription_count' => $subscriptionCount,
+				'subscribed_devices' => array_map(fn(Device $d) => $d->getMqttId(), $devices)
+			]);
+
+		} catch (\Exception $e) {
+			$this->logger->error('Failed to setup response subscriptions', [
+				'error' => $e->getMessage(),
+				'error_class' => get_class($e)
+			]);
+			throw new \RuntimeException("Failed to setup MQTT response subscriptions: {$e->getMessage()}", 0, $e);
+		}
+	}
+
+	/**
+	 * Setup response callback to handle incoming MQTT messages.
+	 *
+	 * @param MqttWebSocketClient $client Connected MQTT client
+	 */
+	private function setupResponseCallback(MqttWebSocketClient $client): void
+	{
+		// Create response listener for message handling
+		$responseListener = new class($this->logger) implements ResponseListener {
+			private LoggerInterface $logger;
+			private Connection $connection;
+
+			public function __construct(LoggerInterface $logger) {
+				$this->logger = $logger;
+			}
+
+			public function setConnection(Connection $connection): void {
+				$this->connection = $connection;
+			}
+
+			public function onResponse(string $topic, array $registers, string $macAddress): void {
+				if (isset($this->connection)) {
+					// Convert registers back to payload format for existing handleMqttMessage method
+					$payload = $this->registersToPayload($registers);
+					$this->connection->handleMqttMessage($topic, $payload);
+				}
+			}
+
+			public function onError(string $topic, string $error, string $macAddress): void {
+				$this->logger->error('MQTT response error', [
+					'topic' => $topic,
+					'error' => $error,
+					'mac_address' => $macAddress
+				]);
+			}
+
+			public function onConnectionStateChanged(string $topic, bool $connected, string $macAddress): void {
+				$this->logger->debug('MQTT connection state changed', [
+					'topic' => $topic,
+					'connected' => $connected,
+					'mac_address' => $macAddress
+				]);
+			}
+
+			private function registersToPayload(array $registers): string {
+				// Convert register array back to binary payload
+				// Each register = 2 bytes, high byte first
+				$payload = '';
+				for ($i = 0; $i < 81; $i++) {
+					$value = $registers[$i] ?? 0;
+					$high = ($value >> 8) & 0xFF;
+					$low = $value & 0xFF;
+					$payload .= chr($high) . chr($low);
+				}
+				return $payload;
+			}
+		};
+
+		$responseListener->setConnection($this);
+		$client->addResponseListener($responseListener);
+
+		$this->logger->debug('Response callback setup completed');
+	}
+
+	/**
+	 * Handle incoming MQTT messages and route to appropriate handlers.
+	 *
+	 * @param string $topic MQTT topic the message was received on
+	 * @param string $payload Binary message payload
+	 */
+	public function handleMqttMessage(string $topic, string $payload): void
+	{
+		$this->logger->debug('Received MQTT message', [
+			'topic' => $topic,
+			'payload_size' => strlen($payload)
+		]);
+
+		// Route based on topic pattern as per SYSTEM.md
+		if (preg_match('/([0-9a-f]{12})\/device\/response\/client\/04/', $topic, $matches)) {
+			$this->handleOutputCommandResponse($matches[1], $payload);
+		} elseif (preg_match('/([0-9a-f]{12})\/device\/response\/client\/data/', $topic, $matches)) {
+			$this->handleSettingsCommandResponse($matches[1], $payload);
+		} elseif (preg_match('/([0-9a-f]{12})\/device\/response\/state/', $topic, $matches)) {
+			$this->handleStateResponse($matches[1], $payload);
+		} else {
+			$this->logger->warning('Received message on unhandled topic', [
+				'topic' => $topic,
+				'payload_size' => strlen($payload)
+			]);
+		}
+	}
+
+	/**
+	 * Handle output command response from /client/04 topic.
+	 *
+	 * Parses Register 41 bitfield for output states as per SYSTEM.md.
+	 * Expected: 81 registers, Register 41 contains output status bitfield.
+	 *
+	 * @param string $macAddress Device MAC address (12 hex chars)
+	 * @param string $payload Binary MQTT payload containing 81 registers
+	 */
+	private function handleOutputCommandResponse(string $macAddress, string $payload): void
+	{
+		try {
+			$registers = $this->parseRegisterPayload($payload);
+
+			if (count($registers) !== 81) {
+				$this->logger->warning('Invalid register count in /client/04 response', [
+					'mac' => $macAddress,
+					'expected' => 81,
+					'received' => count($registers),
+					'topic' => "{$macAddress}/device/response/client/04"
+				]);
+				return;
+			}
+
+			$outputStates = $this->parseOutputBitfield($registers[41]);
+
+			$this->logger->info('Output command response received', [
+				'mac' => $macAddress,
+				'topic' => "{$macAddress}/device/response/client/04",
+				'register_41_value' => $registers[41],
+				'register_41_binary' => str_pad(decbin($registers[41]), 16, '0', STR_PAD_LEFT),
+				'usb_output' => $outputStates['usb'],
+				'dc_output' => $outputStates['dc'],
+				'ac_output' => $outputStates['ac'],
+				'led_output' => $outputStates['led']
+			]);
+
+		} catch (\Exception $e) {
+			$this->logger->error('Failed to handle output command response', [
+				'mac' => $macAddress,
+				'payload_size' => strlen($payload),
+				'error' => $e->getMessage(),
+				'error_class' => get_class($e)
+			]);
+		}
+	}
+
+	/**
+	 * Handle settings command response from /client/data topic.
+	 *
+	 * Parses settings from registers 20, 57, 59-68 as per SYSTEM.md.
+	 * Expected: 81 registers, focus on power management and timeout settings.
+	 *
+	 * @param string $macAddress Device MAC address (12 hex chars)
+	 * @param string $payload Binary MQTT payload containing 81 registers
+	 */
+	private function handleSettingsCommandResponse(string $macAddress, string $payload): void
+	{
+		try {
+			$registers = $this->parseRegisterPayload($payload);
+
+			if (count($registers) !== 81) {
+				$this->logger->warning('Invalid register count in /client/data response', [
+					'mac' => $macAddress,
+					'expected' => 81,
+					'received' => count($registers),
+					'topic' => "{$macAddress}/device/response/client/data"
+				]);
+				return;
+			}
+
+			// Parse power management settings as per SYSTEM.md
+			$settings = [
+				'max_charging_current' => $registers[20] ?? null,    // 1-20 Amperes
+				'discharge_limit' => $registers[66] ?? null,         // 0-1000 tenths (10.0% = 100)
+				'ac_charge_limit' => $registers[67] ?? null,         // 0-1000 tenths (100.0% = 1000)
+				'ac_silent' => $registers[57] ?? null,               // Boolean: 1=enabled, 0=disabled
+				'usb_standby' => $registers[59] ?? null,             // Values: 0,3,5,10,30 minutes
+				'ac_standby' => $registers[60] ?? null,              // Values: 0,480,960,1440 minutes
+				'dc_standby' => $registers[61] ?? null,              // Values: 0,480,960,1440 minutes
+				'screen_rest' => $registers[62] ?? null,             // Values: 0,180,300,600,1800 seconds
+				'sleep_time' => $registers[68] ?? null               // Values: 5,10,30,480 minutes (NEVER 0!)
+			];
+
+			// Convert tenths to percentages for readability
+			$readableSettings = $settings;
+			if (isset($settings['discharge_limit'])) {
+				$readableSettings['discharge_limit_percent'] = $settings['discharge_limit'] / 10.0;
+			}
+			if (isset($settings['ac_charge_limit'])) {
+				$readableSettings['ac_charge_limit_percent'] = $settings['ac_charge_limit'] / 10.0;
+			}
+
+			$this->logger->info('Settings command response received', [
+				'mac' => $macAddress,
+				'topic' => "{$macAddress}/device/response/client/data",
+				'settings_raw' => array_filter($settings, fn($v) => $v !== null),
+				'settings_readable' => array_filter($readableSettings, fn($v) => $v !== null)
+			]);
+
+		} catch (\Exception $e) {
+			$this->logger->error('Failed to handle settings command response', [
+				'mac' => $macAddress,
+				'payload_size' => strlen($payload),
+				'error' => $e->getMessage(),
+				'error_class' => get_class($e)
+			]);
+		}
+	}
+
+	/**
+	 * Handle state response from /state topic.
+	 *
+	 * @param string $macAddress Device MAC address (12 hex chars)
+	 * @param string $payload Binary MQTT payload
+	 */
+	private function handleStateResponse(string $macAddress, string $payload): void
+	{
+		$this->logger->debug('State response received', [
+			'mac' => $macAddress,
+			'topic' => "{$macAddress}/device/response/state",
+			'payload_size' => strlen($payload)
+		]);
+
+		// TODO: Implement state response parsing if needed
+		// For now, just log the reception
+	}
+
+	/**
+	 * Parse binary MQTT payload to 81 register array.
+	 *
+	 * Converts binary payload to array of 16-bit registers.
+	 * Each register = 2 bytes, high byte first (big-endian).
+	 *
+	 * @param string $payload Binary MQTT payload
+	 * @return array Array of 81 registers (16-bit integers)
+	 * @throws \InvalidArgumentException If payload size is invalid
+	 */
+	private function parseRegisterPayload(string $payload): array
+	{
+		$expectedSize = 81 * 2; // 81 registers × 2 bytes each = 162 bytes
+		$actualSize = strlen($payload);
+
+		if ($actualSize < $expectedSize) {
+			throw new \InvalidArgumentException(
+				"Payload too small: expected at least {$expectedSize} bytes, got {$actualSize}"
+			);
+		}
+
+		$bytes = unpack('C*', $payload);
+		$registers = [];
+
+		for ($i = 0; $i < 81; $i++) {
+			$high = $bytes[($i * 2) + 1] ?? 0;
+			$low = $bytes[($i * 2) + 2] ?? 0;
+			$registers[$i] = ($high << 8) | $low;  // Big-endian: high byte first
+		}
+
+		return $registers;
+	}
+
+	/**
+	 * Parse Register 41 output bitfield as per SYSTEM.md.
+	 *
+	 * Reads binary string from right (LSB first):
+	 * - USB Output = Bit 6
+	 * - DC Output = Bit 5
+	 * - AC Output = Bit 4
+	 * - LED Output = Bit 3
+	 *
+	 * @param int $register41 Register 41 value (16-bit integer)
+	 * @return array Associative array with output states
+	 */
+	private function parseOutputBitfield(int $register41): array
+	{
+		// Convert to 16-bit binary string, padded with leading zeros
+		$binary = str_pad(decbin($register41), 16, '0', STR_PAD_LEFT);
+
+		// Read from right (LSB first) as per SYSTEM.md
+		return [
+			'usb' => $binary[15-6] === '1',  // Bit 6 from right
+			'dc' => $binary[15-5] === '1',   // Bit 5 from right
+			'ac' => $binary[15-4] === '1',   // Bit 4 from right
+			'led' => $binary[15-3] === '1'   // Bit 3 from right
+		];
 	}
 
 	/**
@@ -928,10 +1269,46 @@ final class Connection {
 				'command_description' => $command->getDescription()
 			]);
 
-			// TODO: Implement response handling based on CommandResponseType
-			// if ($command->getResponseType() === CommandResponseType::IMMEDIATE) {
-			//     $this->waitForResponse($macAddress, $command, 5); // 5s timeout
-			// }
+			// Log response expectations based on CommandResponseType
+			switch ($command->getResponseType()) {
+				case CommandResponseType::IMMEDIATE:
+					$this->logger->info('Command sent - expecting immediate response', [
+						'mac_address' => $macAddress,
+						'command_description' => $command->getDescription(),
+						'expected_response_topic' => "{$macAddress}/device/response/client/04",
+						'expected_timing' => 'Within seconds',
+						'response_content' => 'Register 41 bitfield with output states'
+					]);
+					break;
+
+				case CommandResponseType::DELAYED:
+					$this->logger->info('Settings command sent - expecting delayed response', [
+						'mac_address' => $macAddress,
+						'command_description' => $command->getDescription(),
+						'expected_response_topic' => "{$macAddress}/device/response/client/data",
+						'expected_timing' => '~30 seconds (periodic update)',
+						'response_content' => 'Settings registers 20, 57, 59-68'
+					]);
+					break;
+
+				case CommandResponseType::READ_RESPONSE:
+					$this->logger->info('Read command sent - expecting data response', [
+						'mac_address' => $macAddress,
+						'command_description' => $command->getDescription(),
+						'expected_response_topic' => "{$macAddress}/device/response/client/data",
+						'expected_timing' => 'Within seconds',
+						'response_content' => 'All 81 registers'
+					]);
+					break;
+
+				default:
+					$this->logger->warning('Unknown response type for command', [
+						'mac_address' => $macAddress,
+						'command_description' => $command->getDescription(),
+						'response_type' => $command->getResponseType()->name
+					]);
+					break;
+			}
 
 		} catch (\Exception $e) {
 			$this->logger->error('MQTT command send failed', [
