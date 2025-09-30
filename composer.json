@@ -15,7 +15,8 @@
         "react/dns": "^1.13",
         "ratchet/pawl": "^0.4",
         "php-mqtt/client": "^2.1",
-        "evenement/evenement": "^3.0"
+        "evenement/evenement": "^3.0",
+        "react/http": "^1.11"
     },
     "autoload": {
         "psr-4": {
