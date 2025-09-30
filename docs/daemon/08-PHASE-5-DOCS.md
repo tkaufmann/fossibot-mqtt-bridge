@@ -147,6 +147,7 @@ mkdir -p examples
 
 ```yaml
 # ABOUTME: Home Assistant MQTT integration for Fossibot devices
+# IMPORTANT: Replace 7C2C67AB5F0E with your device's MAC address in all topics below
 
 mqtt:
   # Battery & Power Sensors
@@ -287,6 +288,8 @@ automation:
 
 **File:** `examples/nodered.json`
 
+**IMPORTANT:** Replace `7C2C67AB5F0E` with your device's MAC address in all `topic` fields below.
+
 ```json
 [
   {
@@ -401,7 +404,7 @@ automation:
 
 // Configuration
 $mqttClientId = 12345; // Your MQTT Client instance ID
-$deviceMac = '7C2C67AB5F0E'; // Your device MAC address
+$deviceMac = '7C2C67AB5F0E'; // IMPORTANT: Replace with your device's MAC address
 
 // Subscribe to device state updates
 MQTT_Subscribe($mqttClientId, "fossibot/$deviceMac/state");
@@ -495,6 +498,7 @@ import paho.mqtt.client as mqtt
 
 MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
+# IMPORTANT: Replace with your device's MAC address
 DEVICE_MAC = "7C2C67AB5F0E"
 
 # Callbacks
