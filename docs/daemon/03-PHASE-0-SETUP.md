@@ -288,12 +288,23 @@ brew install mosquitto
 brew services start mosquitto
 ```
 
-**Linux:**
+**Linux (Ubuntu/Debian):**
 ```bash
 sudo apt-get update
 sudo apt-get install mosquitto mosquitto-clients
 sudo systemctl enable mosquitto
 sudo systemctl start mosquitto
+```
+
+**Windows:**
+1. Download installer from [mosquitto.org/download](https://mosquitto.org/download/)
+2. Run installer (select "Service" option during installation)
+3. Mosquitto runs as Windows Service automatically
+4. Verify in Services app (`services.msc`) - "Mosquitto Broker" should be "Running"
+
+**Alternative (All Platforms):** Docker
+```bash
+docker run -d -p 1883:1883 --name mosquitto eclipse-mosquitto:2
 ```
 
 **Verify Mosquitto:**
@@ -369,11 +380,21 @@ git commit -m "test: Add Mosquitto connection test"
 
 **Files to delete:**
 ```bash
+# Remove legacy directories
 rm -rf src/Queue/
 rm -rf src/Contracts/
 rm -rf src/Parsing/
+
+# Remove legacy classes
 rm src/Device/DeviceFacade.php
-rm test_*.php  # Old test scripts (keep new ones from Phase 0)
+
+# Check for old test scripts (BEFORE running Phase 0 test scripts)
+ls test_*.php 2>/dev/null
+# If old test scripts exist, delete them EXPLICITLY by name to avoid
+# accidentally deleting Phase 0 test scripts:
+# rm test_old_connection.php test_old_queue.php ...
+#
+# ⚠️ DO NOT use "rm test_*.php" after creating Phase 0 test scripts!
 ```
 
 **Verify removal:**
@@ -390,6 +411,11 @@ deleted: src/Contracts/ResponseListener.php
 deleted: src/Device/DeviceFacade.php
 deleted: src/Parsing/ModbusResponseParser.php
 ```
+
+**⚠️ Important Timing:**
+- Execute this cleanup step **BEFORE** creating test scripts in Steps 0.1-0.3
+- OR explicitly list old test scripts by name if cleaning up later
+- Never use wildcards (`test_*.php`) after Phase 0 test scripts exist
 
 **Update composer autoload:**
 ```bash
