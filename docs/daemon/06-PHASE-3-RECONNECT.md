@@ -59,319 +59,298 @@ Connection Lost
 
 **Update:** `src/Bridge/AsyncCloudClient.php`
 
-Add state tracking and reconnect configuration:
+**IMPORTANT:** This step extends the **event-based AsyncCloudClient from Phase 1** (with custom MQTT packet handling, no `php-mqtt/client`).
+
+Add these properties to the existing class (after line ~91 in Phase 1 version):
 
 ```php
-<?php
-declare(strict_types=1);
+// === ADD THESE PROPERTIES TO EXISTING AsyncCloudClient CLASS ===
 
-namespace Fossibot\Bridge;
+// Reconnect state
+private bool $reconnecting = false;
+private int $reconnectAttempts = 0;
+private int $maxReconnectAttempts = 10;
+private array $backoffDelays = [5, 10, 15, 30, 45, 60]; // seconds
+private ?\React\EventLoop\TimerInterface $reconnectTimer = null;
 
-use Evenement\EventEmitter;
-use React\EventLoop\LoopInterface;
-use React\Promise\PromiseInterface;
-use Psr\Log\LoggerInterface;
+// Token expiry tracking
+private ?int $mqttTokenExpiresAt = null;
+private ?int $loginTokenExpiresAt = null;
+```
 
+**Add these methods** to the existing `AsyncCloudClient` class:
+
+```php
 /**
- * Async MQTT client for Fossibot Cloud with smart reconnect logic.
+ * Initiates reconnection with smart tier-based strategy.
  *
- * Implements three-tier reconnect strategy:
- * - Tier 1: Simple reconnect (reuse tokens)
- * - Tier 2: Full re-authentication (new tokens)
- * - Tier 3: Exponential backoff (5s → 60s max)
+ * @param bool $forceReauth Force Tier 2 (full re-auth) immediately
+ * @return PromiseInterface
  */
-class AsyncCloudClient extends EventEmitter
+public function reconnect(bool $forceReauth = false): PromiseInterface
 {
-    // Connection state
-    private bool $connected = false;
-    private bool $reconnecting = false;
-
-    // Reconnect configuration
-    private int $reconnectAttempts = 0;
-    private int $maxReconnectAttempts = 10;
-    private array $backoffDelays = [5, 10, 15, 30, 45, 60]; // seconds
-
-    // Token expiry tracking
-    private ?int $mqttTokenExpiresAt = null;
-    private ?int $loginTokenExpiresAt = null;
-
-    // Reconnect timer
-    private ?\React\EventLoop\TimerInterface $reconnectTimer = null;
-
-    // ... existing constructor and methods ...
-
-    /**
-     * Initiates reconnection with smart tier-based strategy.
-     *
-     * @param bool $forceReauth Force Tier 2 (full re-auth) immediately
-     */
-    public function reconnect(bool $forceReauth = false): PromiseInterface
-    {
-        if ($this->reconnecting) {
-            $this->logger->debug('Reconnection already in progress', [
-                'email' => $this->email
-            ]);
-            return \React\Promise\resolve();
-        }
-
-        $this->reconnecting = true;
-        $this->reconnectAttempts++;
-
-        $this->logger->info('Starting reconnection attempt', [
-            'email' => $this->email,
-            'attempt' => $this->reconnectAttempts,
-            'force_reauth' => $forceReauth
-        ]);
-
-        // Cancel any pending reconnect timer
-        if ($this->reconnectTimer !== null) {
-            $this->loop->cancelTimer($this->reconnectTimer);
-            $this->reconnectTimer = null;
-        }
-
-        // Tier 1: Simple reconnect (unless forceReauth)
-        if (!$forceReauth && $this->hasValidTokens()) {
-            return $this->attemptSimpleReconnect()
-                ->then(
-                    fn() => $this->onReconnectSuccess(),
-                    fn($error) => $this->onReconnectFailure($error, false)
-                );
-        }
-
-        // Tier 2: Full re-authentication
-        return $this->attemptFullReauth()
-            ->then(
-                fn() => $this->onReconnectSuccess(),
-                fn($error) => $this->onReconnectFailure($error, true)
-            );
-    }
-
-    /**
-     * Tier 1: Simple reconnect using existing authentication tokens.
-     */
-    private function attemptSimpleReconnect(): PromiseInterface
-    {
-        $this->logger->debug('Attempting Tier 1: Simple reconnect', [
+    if ($this->reconnecting) {
+        $this->logger->debug('Reconnection already in progress', [
             'email' => $this->email
         ]);
-
-        // Close existing connections cleanly
-        $this->disconnect();
-
-        // Reconnect with existing tokens
-        return $this->connectWebSocket()
-            ->then(fn() => $this->setupMqtt())
-            ->then(fn() => $this->resubscribeToDevices());
-    }
-
-    /**
-     * Tier 2: Full re-authentication flow (Stage 1-4).
-     */
-    private function attemptFullReauth(): PromiseInterface
-    {
-        $this->logger->debug('Attempting Tier 2: Full re-authentication', [
-            'email' => $this->email
-        ]);
-
-        // Clean slate
-        $this->disconnect();
-        $this->clearAuthTokens();
-
-        // Full authentication flow
-        return $this->authenticate()
-            ->then(fn() => $this->connectWebSocket())
-            ->then(fn() => $this->setupMqtt())
-            ->then(fn() => $this->discoverDevices());
-    }
-
-    /**
-     * Reconnection succeeded - reset state.
-     */
-    private function onReconnectSuccess(): void
-    {
-        $this->connected = true;
-        $this->reconnecting = false;
-        $this->reconnectAttempts = 0;
-
-        $this->logger->info('Reconnection successful', [
-            'email' => $this->email
-        ]);
-
-        $this->emit('reconnect');
-    }
-
-    /**
-     * Reconnection failed - schedule Tier 3 retry with exponential backoff.
-     *
-     * @param \Throwable $error The error that caused failure
-     * @param bool $wasReauth Whether this was a Tier 2 (full reauth) attempt
-     */
-    private function onReconnectFailure(\Throwable $error, bool $wasReauth): void
-    {
-        $this->reconnecting = false;
-
-        // Check if we should give up
-        if ($this->reconnectAttempts >= $this->maxReconnectAttempts) {
-            $this->logger->error('Max reconnection attempts reached, giving up', [
-                'email' => $this->email,
-                'attempts' => $this->reconnectAttempts,
-                'error' => $error->getMessage()
-            ]);
-
-            $this->emit('error', [$error]);
-            return;
-        }
-
-        // Determine backoff delay
-        $delayIndex = min($this->reconnectAttempts - 1, count($this->backoffDelays) - 1);
-        $delay = $this->backoffDelays[$delayIndex];
-
-        $this->logger->warning('Reconnection failed, scheduling retry', [
-            'email' => $this->email,
-            'attempt' => $this->reconnectAttempts,
-            'next_retry_in_seconds' => $delay,
-            'was_reauth' => $wasReauth,
-            'error' => $error->getMessage()
-        ]);
-
-        // Tier 3: Schedule retry with exponential backoff
-        $this->reconnectTimer = $this->loop->addTimer($delay, function() use ($wasReauth) {
-            $this->reconnectTimer = null;
-
-            // If simple reconnect failed, try full reauth next time
-            $forceReauth = !$wasReauth;
-
-            $this->reconnect($forceReauth);
-        });
-
-        $this->emit('reconnect_scheduled', [$delay]);
-    }
-
-    /**
-     * Checks if cached authentication tokens are still valid.
-     */
-    private function hasValidTokens(): bool
-    {
-        $now = time();
-
-        // Check MQTT token expiry (primary concern, ~3 days)
-        if ($this->mqttTokenExpiresAt !== null && $this->mqttTokenExpiresAt <= $now) {
-            $this->logger->debug('MQTT token expired', [
-                'email' => $this->email,
-                'expired_at' => date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
-            ]);
-            return false;
-        }
-
-        // Check login token expiry (~14 years, rarely expires)
-        if ($this->loginTokenExpiresAt !== null && $this->loginTokenExpiresAt <= $now) {
-            $this->logger->debug('Login token expired', [
-                'email' => $this->email,
-                'expired_at' => date('Y-m-d H:i:s', $this->loginTokenExpiresAt)
-            ]);
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Clears all cached authentication tokens.
-     */
-    private function clearAuthTokens(): void
-    {
-        $this->mqttTokenExpiresAt = null;
-        $this->loginTokenExpiresAt = null;
-        // Note: Actual token strings are cleared in authenticate() method
-    }
-
-    /**
-     * Re-subscribes to all device topics after reconnection.
-     */
-    private function resubscribeToDevices(): PromiseInterface
-    {
-        $this->logger->debug('Re-subscribing to device topics', [
-            'email' => $this->email,
-            'device_count' => count($this->devices)
-        ]);
-
-        foreach ($this->devices as $device) {
-            $topic = "{$device->getMqttId()}/device/response/+";
-            $this->subscribe($topic);
-        }
-
         return \React\Promise\resolve();
     }
 
-    /**
-     * Override disconnect to ensure clean state.
-     */
-    public function disconnect(): void
-    {
-        $this->connected = false;
+    $this->reconnecting = true;
+    $this->reconnectAttempts++;
 
-        if ($this->mqttClient !== null) {
-            try {
-                $this->mqttClient->disconnect();
-            } catch (\Throwable $e) {
-                $this->logger->debug('Error disconnecting MQTT client', [
-                    'error' => $e->getMessage()
-                ]);
-            }
-            $this->mqttClient = null;
-        }
+    $this->logger->info('Starting reconnection attempt', [
+        'email' => $this->email,
+        'attempt' => $this->reconnectAttempts,
+        'force_reauth' => $forceReauth
+    ]);
 
-        if ($this->websocket !== null) {
-            $this->websocket->close();
-            $this->websocket = null;
-        }
-
-        if ($this->messageLoopTimer !== null) {
-            $this->loop->cancelTimer($this->messageLoopTimer);
-            $this->messageLoopTimer = null;
-        }
+    // Cancel any pending reconnect timer
+    if ($this->reconnectTimer !== null) {
+        $this->loop->cancelTimer($this->reconnectTimer);
+        $this->reconnectTimer = null;
     }
+
+    // Tier 1: Simple reconnect (unless forceReauth)
+    if (!$forceReauth && $this->hasValidTokens()) {
+        return $this->attemptSimpleReconnect()
+            ->then(
+                fn() => $this->onReconnectSuccess(),
+                fn($error) => $this->onReconnectFailure($error, false)
+            );
+    }
+
+    // Tier 2: Full re-authentication
+    return $this->attemptFullReauth()
+        ->then(
+            fn() => $this->onReconnectSuccess(),
+            fn($error) => $this->onReconnectFailure($error, true)
+        );
+}
+
+/**
+ * Tier 1: Simple reconnect using existing authentication tokens.
+ * Uses the Connection object stored during initial authentication.
+ */
+private function attemptSimpleReconnect(): PromiseInterface
+{
+    $this->logger->debug('Attempting Tier 1: Simple reconnect', [
+        'email' => $this->email
+    ]);
+
+    // Close existing WebSocket cleanly (but keep Connection object)
+    if ($this->websocket !== null) {
+        $this->websocket->close();
+        $this->websocket = null;
+    }
+
+    $this->connected = false;
+    $this->mqttBuffer = '';
+
+    // Reconnect with existing tokens from $this->connection
+    return $this->connectWebSocket()
+        ->then(fn() => $this->setupMqtt())
+        ->then(fn() => $this->resubscribeToDevices());
+}
+
+/**
+ * Tier 2: Full re-authentication flow (creates new Connection object).
+ */
+private function attemptFullReauth(): PromiseInterface
+{
+    $this->logger->debug('Attempting Tier 2: Full re-authentication', [
+        'email' => $this->email
+    ]);
+
+    // Clean slate
+    if ($this->websocket !== null) {
+        $this->websocket->close();
+        $this->websocket = null;
+    }
+
+    $this->connected = false;
+    $this->mqttBuffer = '';
+    $this->connection = null; // Force new Connection object
+    $this->clearAuthTokens();
+
+    // Full authentication flow (same as initial connect())
+    return $this->authenticate()
+        ->then(fn() => $this->connectWebSocket())
+        ->then(fn() => $this->setupMqtt())
+        ->then(fn() => $this->discoverDevices());
+}
+
+/**
+ * Reconnection succeeded - reset state.
+ */
+private function onReconnectSuccess(): void
+{
+    $this->connected = true;
+    $this->reconnecting = false;
+    $this->reconnectAttempts = 0;
+
+    $this->logger->info('Reconnection successful', [
+        'email' => $this->email
+    ]);
+
+    $this->emit('reconnect');
+}
+
+/**
+ * Reconnection failed - schedule Tier 3 retry with exponential backoff.
+ *
+ * @param \Throwable $error The error that caused failure
+ * @param bool $wasReauth Whether this was a Tier 2 (full reauth) attempt
+ */
+private function onReconnectFailure(\Throwable $error, bool $wasReauth): void
+{
+    $this->reconnecting = false;
+
+    // Check if we should give up
+    if ($this->reconnectAttempts >= $this->maxReconnectAttempts) {
+        $this->logger->error('Max reconnection attempts reached, giving up', [
+            'email' => $this->email,
+            'attempts' => $this->reconnectAttempts,
+            'error' => $error->getMessage()
+        ]);
+
+        $this->emit('error', [$error]);
+        return;
+    }
+
+    // Determine backoff delay
+    $delayIndex = min($this->reconnectAttempts - 1, count($this->backoffDelays) - 1);
+    $delay = $this->backoffDelays[$delayIndex];
+
+    $this->logger->warning('Reconnection failed, scheduling retry', [
+        'email' => $this->email,
+        'attempt' => $this->reconnectAttempts,
+        'next_retry_in_seconds' => $delay,
+        'was_reauth' => $wasReauth,
+        'error' => $error->getMessage()
+    ]);
+
+    // Tier 3: Schedule retry with exponential backoff
+    $this->reconnectTimer = $this->loop->addTimer($delay, function() use ($wasReauth) {
+        $this->reconnectTimer = null;
+
+        // If simple reconnect failed, try full reauth next time
+        $forceReauth = !$wasReauth;
+
+        $this->reconnect($forceReauth);
+    });
+
+    $this->emit('reconnect_scheduled', [$delay]);
+}
+
+/**
+ * Checks if cached authentication tokens are still valid.
+ */
+private function hasValidTokens(): bool
+{
+    // If Connection object doesn't exist, tokens are invalid
+    if ($this->connection === null) {
+        return false;
+    }
+
+    $now = time();
+
+    // Check MQTT token expiry (primary concern, ~3 days)
+    if ($this->mqttTokenExpiresAt !== null && $this->mqttTokenExpiresAt <= $now) {
+        $this->logger->debug('MQTT token expired', [
+            'email' => $this->email,
+            'expired_at' => date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
+        ]);
+        return false;
+    }
+
+    // Check login token expiry (~14 years, rarely expires)
+    if ($this->loginTokenExpiresAt !== null && $this->loginTokenExpiresAt <= $now) {
+        $this->logger->debug('Login token expired', [
+            'email' => $this->email,
+            'expired_at' => date('Y-m-d H:i:s', $this->loginTokenExpiresAt)
+        ]);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Clears all cached authentication tokens.
+ */
+private function clearAuthTokens(): void
+{
+    $this->mqttTokenExpiresAt = null;
+    $this->loginTokenExpiresAt = null;
+}
+
+/**
+ * Re-subscribes to all device topics after reconnection.
+ */
+private function resubscribeToDevices(): PromiseInterface
+{
+    $this->logger->debug('Re-subscribing to device topics', [
+        'email' => $this->email,
+        'device_count' => count($this->devices)
+    ]);
+
+    foreach ($this->devices as $device) {
+        $mac = $device->getMqttId();
+        $topic = "$mac/device/response/+";
+        $this->subscribe($topic);
+    }
+
+    return \React\Promise\resolve();
 }
 ```
 
-**Update:** `src/Bridge/AsyncCloudClient.php` (authenticate method)
+**Commit:**
+```bash
+git add src/Bridge/AsyncCloudClient.php
+git commit -m "feat(bridge): Add three-tier reconnect logic to AsyncCloudClient"
+```
 
-Add token expiry tracking:
+**Deliverable:** ✅ Reconnect state management complete
+
+---
+
+### Step 3.2: Add Token Expiry Tracking and Error Detection (60 min)
+
+**Update:** `src/Bridge/AsyncCloudClient.php`
+
+**Modify the existing `authenticate()` method** to track token expiry:
 
 ```php
 /**
- * Executes full authentication flow (Stage 1-4).
- * Stores token expiry times for reconnect logic.
+ * Reuse existing Connection class for 3-stage auth.
+ * MODIFICATION: Extract and store token expiry timestamps.
  */
 private function authenticate(): PromiseInterface
 {
-    $this->logger->debug('Starting authentication', ['email' => $this->email]);
+    $this->connection = new Connection(
+        $this->email,
+        $this->password,
+        $this->logger
+    );
 
-    return $this->authenticateStage1() // Anonymous token
-        ->then(function($stage1Response) {
-            // Extract anonymous token expiry
-            if (isset($stage1Response['expiresInSecond'])) {
-                $this->mqttTokenExpiresAt = time() + (int)$stage1Response['expiresInSecond'];
-            }
+    try {
+        // This is synchronous but fast (~1-2 seconds)
+        $this->connection->connect();
 
-            return $this->authenticateStage2(); // Login
-        })
-        ->then(function($stage2Response) {
-            // Extract login token expiry
-            if (isset($stage2Response['tokenExpired'])) {
-                $this->loginTokenExpiresAt = (int)($stage2Response['tokenExpired'] / 1000);
-            }
+        // Extract MQTT token expiry from Connection object
+        $mqttToken = $this->connection->getMqttToken();
+        if (isset($mqttToken['token'])) {
+            $this->mqttTokenExpiresAt = $this->extractJwtExpiry($mqttToken['token']);
+        }
 
-            return $this->authenticateStage3(); // MQTT token
-        })
-        ->then(function($stage3Response) {
-            // Parse JWT to extract expiry
-            if (isset($stage3Response['token'])) {
-                $this->mqttTokenExpiresAt = $this->extractJwtExpiry($stage3Response['token']);
-            }
+        // Extract login token expiry (stored in Connection from Stage 2)
+        // Access via Connection's internal state if exposed, or skip (14 year expiry)
 
-            return $stage3Response;
-        });
+        return \React\Promise\resolve();
+    } catch (\Exception $e) {
+        return \React\Promise\reject($e);
+    }
 }
 
 /**
@@ -391,151 +370,140 @@ private function extractJwtExpiry(string $jwt): ?int
 }
 ```
 
-**Commit:**
-```bash
-git add src/Bridge/AsyncCloudClient.php
-git commit -m "feat(reconnect): Add three-tier reconnect strategy to AsyncCloudClient"
-```
-
-**Deliverable:** ✅ AsyncCloudClient has reconnect state management
-
----
-
-### Step 3.2: Add Error Detection and Auto-Reconnect (45 min)
-
-**Update:** `src/Bridge/AsyncCloudClient.php` (connect method)
-
-Register disconnect handlers:
+**Modify the existing `setupMqtt()` method** to detect auth failures:
 
 ```php
 /**
- * Establishes connection to Fossibot Cloud MQTT.
- * Registers automatic reconnect on disconnect.
- */
-public function connect(): PromiseInterface
-{
-    return $this->authenticate()
-        ->then(fn() => $this->connectWebSocket())
-        ->then(fn() => $this->setupWebSocketHandlers()) // NEW
-        ->then(fn() => $this->setupMqtt())
-        ->then(fn() => $this->discoverDevices())
-        ->then(function() {
-            $this->connected = true;
-            $this->reconnectAttempts = 0; // Reset on successful connect
-            $this->emit('connect');
-        })
-        ->otherwise(function($error) {
-            $this->logger->error('Connection failed', [
-                'email' => $this->email,
-                'error' => $error->getMessage()
-            ]);
-
-            // Schedule reconnect on initial connection failure
-            $this->onReconnectFailure($error, false);
-
-            throw $error;
-        });
-}
-
-/**
- * Registers WebSocket event handlers for automatic reconnection.
- */
-private function setupWebSocketHandlers(): PromiseInterface
-{
-    // Handle WebSocket close
-    $this->websocket->on('close', function() {
-        if (!$this->connected) {
-            return; // Already handling disconnect
-        }
-
-        $this->logger->warning('WebSocket connection closed', [
-            'email' => $this->email
-        ]);
-
-        $this->connected = false;
-        $this->emit('disconnect');
-
-        // Trigger automatic reconnect
-        $this->reconnect(false);
-    });
-
-    // Handle WebSocket errors
-    $this->websocket->on('error', function(\Exception $error) {
-        $this->logger->error('WebSocket error', [
-            'email' => $this->email,
-            'error' => $error->getMessage()
-        ]);
-
-        $this->emit('error', [$error]);
-
-        // Don't trigger reconnect here - wait for 'close' event
-    });
-
-    return \React\Promise\resolve();
-}
-```
-
-**Update:** `src/Bridge/AsyncCloudClient.php` (setupMqtt method)
-
-Add MQTT error detection:
-
-```php
-/**
- * Initializes MQTT client over WebSocket transport.
- * Detects authentication failures via CONNACK codes.
+ * Setup MQTT over WebSocket (event-based).
+ * MODIFICATION: Detect CONNACK errors and trigger reconnect.
  */
 private function setupMqtt(): PromiseInterface
 {
-    $this->logger->debug('Setting up MQTT protocol', ['email' => $this->email]);
+    $deferred = new \React\Promise\Deferred();
 
-    try {
-        $this->mqttClient = new \PhpMqtt\Client\MqttClient(
-            stream: $this->websocket->stream,
-            clientId: 'fossibot_client_' . uniqid(),
-            logger: $this->logger
-        );
+    // ... existing WebSocket event registration ...
 
-        $connectionSettings = (new \PhpMqtt\Client\ConnectionSettings)
-            ->setUsername($this->mqttUsername)
-            ->setPassword($this->mqttPassword)
-            ->setConnectTimeout(10)
-            ->setUseTls(false)
-            ->setKeepAliveInterval(60);
+    // Modify CONNACK handler to detect auth failures
+    $this->once('mqtt_connack', function($returnCode) use ($deferred) {
+        if ($returnCode === 0) {
+            $this->logger->info('MQTT connection accepted');
+            $deferred->resolve();
+        } else {
+            $error = new \RuntimeException("MQTT connection refused: code $returnCode");
+            $this->logger->error('MQTT connection refused', ['code' => $returnCode]);
 
-        $this->mqttClient->connect($connectionSettings);
+            // CONNACK code 5 = Not authorized → force re-auth
+            if ($returnCode === 5) {
+                $this->logger->warning('MQTT auth failed, scheduling re-auth');
+                $this->loop->futureTick(function() {
+                    $this->reconnect(true); // Force Tier 2 re-auth
+                });
+            }
 
-        // Check CONNACK return code
-        // Note: php-mqtt/client throws exception on non-zero CONNACK
-        // Exception message contains return code
-
-    } catch (\PhpMqtt\Client\Exceptions\ConnectingToBrokerFailedException $e) {
-        // Check if this is an authentication failure (CONNACK code 5)
-        if (str_contains($e->getMessage(), 'code 5') ||
-            str_contains($e->getMessage(), 'not authorized')) {
-
-            $this->logger->warning('MQTT authentication failed, triggering re-auth', [
-                'email' => $this->email,
-                'error' => $e->getMessage()
-            ]);
-
-            // Force Tier 2 (full re-auth) on next reconnect
-            $this->clearAuthTokens();
+            $deferred->reject($error);
         }
+    });
 
-        throw $e;
+    // ... existing MQTT CONNECT packet sending ...
+
+    return $deferred->promise();
+}
+```
+
+**Modify the existing `connectWebSocket()` method** to register disconnect handler:
+
+```php
+/**
+ * Connect to WebSocket.
+ * MODIFICATION: Register disconnect handler for auto-reconnect.
+ */
+private function connectWebSocket(): PromiseInterface
+{
+    $wsConnector = new WebSocketConnector($this->loop);
+    $mqttUrl = 'wss://mqtt.sydpower.com:8083/mqtt';
+
+    $this->logger->debug('Connecting WebSocket', ['url' => $mqttUrl]);
+
+    return $wsConnector($mqttUrl)->then(
+        function(WebSocket $conn) {
+            $this->websocket = $conn;
+            $this->logger->debug('WebSocket connected');
+
+            // Register disconnect handler for auto-reconnect
+            $conn->on('close', function($code = null, $reason = null) {
+                $this->logger->warning('WebSocket closed', [
+                    'code' => $code,
+                    'reason' => $reason
+                ]);
+
+                $this->connected = false;
+                $this->emit('disconnect');
+
+                // Auto-reconnect if not manually disconnected
+                if ($this->running && !$this->reconnecting) {
+                    $this->loop->futureTick(function() {
+                        $this->reconnect(false); // Try Tier 1 first
+                    });
+                }
+            });
+
+            return $conn;
+        }
+    );
+}
+```
+
+**Add helper property** to track if client should reconnect:
+
+```php
+// ADD to properties section:
+private bool $running = true; // Set to false during shutdown
+```
+
+**Modify `disconnect()` to set running flag:**
+
+```php
+/**
+ * Disconnect from cloud (async).
+ * MODIFICATION: Set running=false to prevent auto-reconnect.
+ */
+public function disconnect(): PromiseInterface
+{
+    $this->logger->info('AsyncCloudClient disconnecting');
+
+    $this->running = false; // Prevent auto-reconnect
+    $this->connected = false;
+
+    // Send MQTT DISCONNECT packet
+    if ($this->websocket !== null) {
+        $disconnectPacket = "\xe0\x00"; // DISCONNECT packet
+        $this->websocket->send($disconnectPacket);
+        $this->websocket->close();
     }
+
+    $this->emit('disconnect');
 
     return \React\Promise\resolve();
 }
 ```
 
+**Important Notes:**
+
+1. **Event-Based Architecture**: The reconnect logic integrates with the existing event-based `AsyncCloudClient` from Phase 1. No `php-mqtt/client` library is used.
+
+2. **WebSocket Close Event**: Pawl WebSocket automatically emits `close` event on disconnect. We register handler in `connectWebSocket()`.
+
+3. **MQTT Auth Failures**: Detected in `processMqttPacket()` when CONNACK return code is 5. This triggers `reconnect(true)` to force Tier 2 re-auth.
+
+4. **Token Expiry**: JWT expiry is extracted from MQTT token. Connection object is kept in memory for Tier 1 reconnects.
+
 **Commit:**
 ```bash
 git add src/Bridge/AsyncCloudClient.php
-git commit -m "feat(reconnect): Add automatic reconnect on WebSocket/MQTT disconnect"
+git commit -m "feat(reconnect): Add auto-reconnect with token expiry detection"
 ```
 
-**Deliverable:** ✅ Automatic reconnection on connection loss
+**Deliverable:** ✅ Automatic reconnection with auth error detection
 
 ---
 
@@ -543,122 +511,135 @@ git commit -m "feat(reconnect): Add automatic reconnect on WebSocket/MQTT discon
 
 **Update:** `src/Bridge/MqttBridge.php`
 
-Add broker reconnect handling:
+**IMPORTANT:** This step modifies the existing `connectBroker()` method from Phase 2 to add reconnect handling.
+
+**Add properties** for broker reconnect state:
+
+```php
+// ADD to MqttBridge properties:
+private int $brokerReconnectAttempt = 0;
+private int $maxBrokerReconnectAttempts = 5;
+private array $brokerBackoffDelays = [5, 10, 15, 30, 60]; // seconds
+```
+
+**Replace the existing `connectBroker()` method** with this version that includes error handling:
 
 ```php
 /**
- * Initializes local Mosquitto broker connection with reconnect handling.
+ * Connect to local Mosquitto broker with reconnect logic.
  */
-private function initializeBrokerClient(): void
+private function connectBroker(): void
 {
-    $this->logger->info('Connecting to local MQTT broker', [
-        'host' => $this->config['mosquitto']['host'],
-        'port' => $this->config['mosquitto']['port']
+    $host = $this->config['mosquitto']['host'];
+    $port = $this->config['mosquitto']['port'];
+    $clientId = $this->config['mosquitto']['client_id'] ?? 'fossibot_bridge';
+
+    $this->logger->info('Connecting to local broker', [
+        'host' => $host,
+        'port' => $port,
+        'attempt' => $this->brokerReconnectAttempt + 1
     ]);
 
-    $this->brokerClient = new \PhpMqtt\Client\MqttClient(
-        server: $this->config['mosquitto']['host'],
-        port: $this->config['mosquitto']['port'],
-        clientId: $this->config['mosquitto']['client_id'],
-        logger: $this->logger
-    );
-
-    $connectionSettings = (new \PhpMqtt\Client\ConnectionSettings)
-        ->setConnectTimeout(5)
-        ->setUseTls(false)
-        ->setKeepAliveInterval(60)
-        ->setLastWillTopic('fossibot/bridge/status')
-        ->setLastWillMessage('offline')
-        ->setLastWillQualityOfService(1)
-        ->setRetainLastWill(true);
-
-    // Add credentials if configured
-    if ($this->config['mosquitto']['username'] !== null) {
-        $connectionSettings
-            ->setUsername($this->config['mosquitto']['username'])
-            ->setPassword($this->config['mosquitto']['password']);
-    }
-
     try {
-        $this->brokerClient->connect($connectionSettings);
+        $this->brokerClient = new MqttClient($host, $port, $clientId);
 
-        $this->logger->info('Connected to local MQTT broker');
+        $settings = (new ConnectionSettings)
+            ->setKeepAliveInterval(60)
+            ->setUseTls(false)
+            ->setLastWillTopic('fossibot/bridge/status')
+            ->setLastWillMessage('offline')
+            ->setLastWillQualityOfService(1)
+            ->setRetainLastWill(true);
 
-        // Setup broker reconnect monitoring
-        $this->setupBrokerReconnect();
+        if (!empty($this->config['mosquitto']['username'])) {
+            $settings->setUsername($this->config['mosquitto']['username']);
+            $settings->setPassword($this->config['mosquitto']['password']);
+        }
 
-    } catch (\Throwable $e) {
-        $this->logger->error('Failed to connect to local broker', [
-            'error' => $e->getMessage()
-        ]);
-        throw $e;
+        $this->brokerClient->connect($settings, true);
+
+        // Subscribe to command topics
+        $this->brokerClient->subscribe('fossibot/+/command', function($topic, $payload) {
+            $this->handleBrokerCommand($topic, $payload);
+        }, 1);
+
+        $this->logger->info('Connected to local broker');
+
+        // Reset reconnect counter on success
+        $this->brokerReconnectAttempt = 0;
+
+    } catch (\Exception $e) {
+        $this->handleBrokerConnectionFailure($e);
     }
 }
 
 /**
- * Monitors broker connection and reconnects if needed.
+ * Handles broker connection failure with exponential backoff.
  */
-private function setupBrokerReconnect(): void
+private function handleBrokerConnectionFailure(\Exception $error): void
 {
-    // Periodic connection check (every 30 seconds)
-    $this->loop->addPeriodicTimer(30, function() {
-        if (!$this->isBrokerConnected()) {
-            $this->logger->warning('Local broker connection lost, reconnecting...');
-            $this->reconnectBroker();
-        }
+    $this->brokerReconnectAttempt++;
+
+    if ($this->brokerReconnectAttempt > $this->maxBrokerReconnectAttempts) {
+        $this->logger->critical('Failed to connect to local broker after max attempts', [
+            'attempts' => $this->brokerReconnectAttempt,
+            'error' => $error->getMessage()
+        ]);
+
+        // Don't give up completely - reset counter and continue trying
+        $this->brokerReconnectAttempt = 0;
+        $delay = $this->brokerBackoffDelays[count($this->brokerBackoffDelays) - 1];
+    } else {
+        $delayIndex = min($this->brokerReconnectAttempt - 1, count($this->brokerBackoffDelays) - 1);
+        $delay = $this->brokerBackoffDelays[$delayIndex];
+    }
+
+    $this->logger->error('Failed to connect to local broker, retrying', [
+        'attempt' => $this->brokerReconnectAttempt,
+        'next_retry_in_seconds' => $delay,
+        'error' => $error->getMessage()
+    ]);
+
+    // Schedule reconnect attempt
+    $this->loop->addTimer($delay, function() {
+        $this->connectBroker();
     });
 }
-
-/**
- * Checks if broker connection is alive.
- */
-private function isBrokerConnected(): bool
-{
-    try {
-        // Send PINGREQ to check connection
-        $this->brokerClient->loop(true);
-        return true;
-    } catch (\Throwable $e) {
-        return false;
-    }
-}
-
-/**
- * Reconnects to local broker with exponential backoff.
- */
-private function reconnectBroker(int $attempt = 1): void
-{
-    $maxAttempts = 5;
-    $delays = [5, 10, 15, 30, 60];
-
-    if ($attempt > $maxAttempts) {
-        $this->logger->critical('Failed to reconnect to local broker after max attempts');
-        return;
-    }
-
-    try {
-        $this->brokerClient->connect();
-
-        $this->logger->info('Reconnected to local broker');
-
-        // Re-subscribe to command topics
-        $this->subscribeToCommandTopics();
-
-    } catch (\Throwable $e) {
-        $delay = $delays[min($attempt - 1, count($delays) - 1)];
-
-        $this->logger->warning('Broker reconnect failed, retrying', [
-            'attempt' => $attempt,
-            'next_retry_in_seconds' => $delay,
-            'error' => $e->getMessage()
-        ]);
-
-        $this->loop->addTimer($delay, function() use ($attempt) {
-            $this->reconnectBroker($attempt + 1);
-        });
-    }
-}
 ```
+
+**Add periodic broker health check** in the `run()` method (after the broker message loop):
+
+```php
+// In MqttBridge::run(), add after broker message loop setup:
+
+// Setup broker health check (every 30 seconds)
+$this->loop->addPeriodicTimer(30, function() {
+    if ($this->brokerClient !== null) {
+        try {
+            // The loop() call will throw if connection is dead
+            $this->brokerClient->loop(true);
+        } catch (\Exception $e) {
+            $this->logger->warning('Broker health check failed, reconnecting', [
+                'error' => $e->getMessage()
+            ]);
+
+            // Trigger reconnect
+            $this->brokerClient = null;
+            $this->connectBroker();
+        }
+    }
+});
+```
+
+**Important Notes:**
+
+1. **No Hard Failure**: Unlike cloud clients, broker failure should not stop the bridge. It keeps retrying indefinitely.
+
+2. **Health Check**: The periodic health check detects silent connection drops (e.g., network cable unplugged).
+
+3. **Last Will and Testament**: LWT ensures `fossibot/bridge/status` shows `offline` if bridge crashes before graceful shutdown.
+
+4. **Exponential Backoff**: Same pattern as cloud reconnect (5s → 60s max), but never gives up completely.
 
 **Commit:**
 ```bash
