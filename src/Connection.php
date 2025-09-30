@@ -1099,8 +1099,9 @@ final class Connection {
 	 * @throws \InvalidArgumentException If request parameters are invalid
 	 */
 	public function getDevices(): array {
-		if ( !$this->isConnected() ) {
-			throw new \RuntimeException( 'Cannot get devices: Connection not established. Call connect() first.' );
+		// Requires at least Stage 3 (MQTT token) for API authentication
+		if ( $this->authState !== AuthState::STAGE3_COMPLETED && $this->authState !== AuthState::FULLY_CONNECTED ) {
+			throw new \RuntimeException( 'Cannot get devices: Authentication incomplete. Call authenticateOnly() or connect() first.' );
 		}
 
 		try {
