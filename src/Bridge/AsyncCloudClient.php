@@ -481,12 +481,20 @@ class AsyncCloudClient extends EventEmitter
         $mqttUrl = 'ws://mqtt.sydpower.com:8083/mqtt';
         $subProtocols = ['mqtt'];
 
+        // Custom headers to fix HTTP 400 Bad Request from server
+        // Server rejects default Origin header set by Ratchet/Pawl
+        $headers = [
+            'Origin' => 'http://localhost',
+            'User-Agent' => 'Fossibot-Bridge/2.0'
+        ];
+
         $this->logger->debug('Connecting WebSocket', [
             'url' => $mqttUrl,
-            'subprotocols' => $subProtocols
+            'subprotocols' => $subProtocols,
+            'headers' => $headers
         ]);
 
-        return $wsConnector($mqttUrl, $subProtocols)->then(
+        return $wsConnector($mqttUrl, $subProtocols, $headers)->then(
             function(WebSocket $conn) {
                 $this->websocket = $conn;
                 $this->logger->info('WebSocket connected with MQTT subprotocol');
