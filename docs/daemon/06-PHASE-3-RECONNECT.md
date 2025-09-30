@@ -700,13 +700,23 @@ $client->on('error', function($error) {
     echo "❌ Error: " . $error->getMessage() . "\n";
 });
 
-// Connect and then simulate disconnect after 5 seconds
+// Connect and then force WebSocket close (not graceful disconnect) after 5 seconds
 $client->connect()->then(function() use ($client, $loop) {
-    echo "Initial connection successful, will close connection in 5s\n\n";
+    echo "Initial connection successful, will force close WebSocket in 5s\n\n";
 
     $loop->addTimer(5, function() use ($client) {
-        echo "Simulating disconnect...\n";
-        $client->disconnect();
+        echo "Simulating connection loss (force close WebSocket)...\n";
+
+        // Force close WebSocket (simulates network failure)
+        // Note: Using reflection to access protected property for testing
+        $reflection = new \ReflectionClass($client);
+        $wsProperty = $reflection->getProperty('websocket');
+        $wsProperty->setAccessible(true);
+        $ws = $wsProperty->getValue($client);
+
+        if ($ws !== null) {
+            $ws->close(); // This triggers auto-reconnect
+        }
     });
 });
 
@@ -724,10 +734,11 @@ $loop->run();
 Test 1: WebSocket disconnect and auto-reconnect
 -----------------------------------------------
 ✅ Connected
-Initial connection successful, will close connection in 5s
+Initial connection successful, will force close WebSocket in 5s
 
-Simulating disconnect...
+Simulating connection loss (force close WebSocket)...
 ⚠️  Disconnected
+⏱️  Reconnect scheduled in 5 seconds
 ✅ Reconnected successfully
 
 Test complete
@@ -830,24 +841,20 @@ echo "5. Observe successful reconnection\n\n";
 $config = json_decode(file_get_contents('config/example.json'), true);
 $loop = Loop::get();
 
-$bridge = new MqttBridge($config, $loop, $logger);
+$bridge = new MqttBridge($config, $logger);
+
+// Note: run() is blocking, so we can't easily test shutdown in same script
+// For manual testing: Run script, press Ctrl+C to test graceful shutdown
+echo "Bridge starting (press Ctrl+C to test graceful shutdown)...\n\n";
 
 try {
-    $bridge->start();
-    echo "✅ Bridge started and connected to broker\n\n";
-    echo "Now stop Mosquitto and observe reconnection...\n\n";
+    $bridge->run(); // Blocking call - runs until Ctrl+C or error
 } catch (\Throwable $e) {
-    echo "❌ Failed to start bridge: " . $e->getMessage() . "\n";
+    echo "❌ Bridge error: " . $e->getMessage() . "\n";
     exit(1);
 }
 
-// Run for 5 minutes to observe reconnection behavior
-$loop->addTimer(300, function() use ($loop) {
-    echo "\nTest complete\n";
-    $loop->stop();
-});
-
-$loop->run();
+echo "\n✅ Bridge stopped cleanly\n";
 ```
 
 **Run tests:**
@@ -871,37 +878,83 @@ git commit -m "test: Add reconnect scenario validation tests"
 
 **Update:** `src/Bridge/MqttBridge.php`
 
-Add signal handlers for graceful shutdown:
+**IMPORTANT:** This step modifies the existing `run()` method from Phase 2 and adds signal handlers. Do NOT create a new `start()` method - modify the existing `run()` method.
+
+**Modify the existing `run()` method** to add signal handlers:
 
 ```php
 /**
- * Starts the bridge event loop with graceful shutdown handling.
+ * Start bridge (blocking - runs event loop).
+ * MODIFICATION: Add signal handlers for graceful shutdown.
  */
-public function start(): void
+public function run(): void
 {
-    $this->logger->info('Starting Fossibot MQTT Bridge');
+    $this->logger->info('MqttBridge starting...');
+    $this->startTime = time();
 
-    // Initialize components
-    $this->initializeBrokerClient();
+    // Setup signal handlers (NEW)
+    $this->setupSignalHandlers();
+
+    // Initialize accounts
     $this->initializeAccounts();
-    $this->startStatusPublisher();
 
-    // Register shutdown handlers
-    $this->registerShutdownHandlers();
+    // Connect to local broker
+    $this->connectBroker();
 
-    // Publish initial status
+    // Publish initial bridge status
     $this->publishBridgeStatus();
 
-    $this->logger->info('Bridge started successfully, entering event loop');
+    // Setup status publish timer (every 60s)
+    $this->loop->addPeriodicTimer(
+        $this->config['bridge']['status_publish_interval'] ?? 60,
+        fn() => $this->publishBridgeStatus()
+    );
 
-    // Run event loop
+    // Setup broker message loop (from Phase 2)
+    $this->loop->addPeriodicTimer(0.1, function() {
+        if ($this->brokerClient !== null) {
+            try {
+                $this->brokerClient->loop(true);
+            } catch (\Exception $e) {
+                $this->logger->error('Broker message loop error', [
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+    });
+
+    // Setup broker health check (from Step 3.3)
+    $this->loop->addPeriodicTimer(30, function() {
+        if ($this->brokerClient !== null) {
+            try {
+                $this->brokerClient->loop(true);
+            } catch (\Exception $e) {
+                $this->logger->warning('Broker health check failed, reconnecting', [
+                    'error' => $e->getMessage()
+                ]);
+                $this->brokerClient = null;
+                $this->connectBroker();
+            }
+        }
+    });
+
+    $this->running = true;
+    $this->logger->info('MqttBridge ready, entering event loop');
+
+    // Run event loop (blocks here)
     $this->loop->run();
+
+    $this->logger->info('MqttBridge stopped');
 }
 
+**Add new method** `setupSignalHandlers()`:
+
+```php
 /**
- * Registers signal handlers for graceful shutdown.
+ * Setup signal handlers for graceful shutdown.
+ * MODIFICATION: Use loop->addSignal() instead of pcntl_signal().
  */
-private function registerShutdownHandlers(): void
+private function setupSignalHandlers(): void
 {
     // SIGTERM (systemd stop)
     $this->loop->addSignal(SIGTERM, function() {
@@ -915,51 +968,68 @@ private function registerShutdownHandlers(): void
         $this->shutdown();
     });
 }
+```
 
+**Replace the existing `shutdown()` method** from Phase 2:
+
+```php
 /**
  * Performs graceful shutdown.
+ * MODIFICATION: Set running=false in cloud clients, publish offline status.
  */
-private function shutdown(): void
+public function shutdown(): void
 {
-    $this->logger->info('Starting graceful shutdown');
+    $this->logger->info('MqttBridge shutting down...');
+    $this->running = false;
 
-    // Publish offline status
-    $this->brokerClient->publish(
-        'fossibot/bridge/status',
-        'offline',
-        1,
-        true
-    );
+    // Publish offline status to broker
+    if ($this->brokerClient !== null) {
+        $this->brokerClient->publish(
+            'fossibot/bridge/status',
+            'offline',
+            1,
+            true
+        );
 
-    // Publish device offline status
-    foreach ($this->cloudClients as $email => $client) {
-        foreach ($client->getDevices() as $device) {
-            $mac = $device->getMqttId();
-            $this->brokerClient->publish(
-                "fossibot/$mac/availability",
-                'offline',
-                1,
-                true
-            );
+        // Publish device offline status
+        foreach ($this->cloudClients as $email => $client) {
+            foreach ($client->getDevices() as $device) {
+                $mac = $device->getMqttId();
+                $this->brokerClient->publish(
+                    "fossibot/$mac/availability",
+                    'offline',
+                    1,
+                    true
+                );
+            }
         }
     }
 
-    // Disconnect cloud clients
+    // Disconnect all cloud clients
     foreach ($this->cloudClients as $email => $client) {
-        $this->logger->debug('Disconnecting cloud client', ['email' => $email]);
+        $this->logger->info('Disconnecting cloud client', ['email' => $email]);
         $client->disconnect();
     }
 
-    // Disconnect broker client
-    $this->logger->debug('Disconnecting from local broker');
-    $this->brokerClient->disconnect();
+    // Disconnect broker
+    if ($this->brokerClient !== null) {
+        $this->brokerClient->disconnect();
+    }
 
     // Stop event loop
     $this->loop->stop();
 
-    $this->logger->info('Graceful shutdown complete');
+    $this->logger->info('MqttBridge stopped');
 }
 ```
+
+**Important Notes:**
+
+1. **`loop->addSignal()` vs `pcntl_signal()`**: ReactPHP's `addSignal()` is preferred as it integrates with the event loop. No need for `pcntl_signal_dispatch()` periodic timer.
+
+2. **Set `$running = false`**: This prevents cloud clients from auto-reconnecting during shutdown.
+
+3. **Offline Status**: Published to broker before disconnecting, ensuring clients see the bridge going offline gracefully.
 
 **Commit:**
 ```bash
