@@ -277,6 +277,9 @@ class PayloadTransformer
     {
         return json_encode([
             'soc' => $state->soc,
+            'inputWatts' => $state->inputWatts,
+            'outputWatts' => $state->outputWatts,
+            'dcInputWatts' => $state->dcInputWatts,
             'usbOutput' => $state->usbOutput,
             'acOutput' => $state->acOutput,
             'dcOutput' => $state->dcOutput,
@@ -387,6 +390,9 @@ $json = $transformer->stateToJson($state);
 $decoded = json_decode($json, true);
 assert($decoded['soc'] === 85.5, "JSON SoC should be 85.5");
 assert($decoded['usbOutput'] === true, "JSON USB should be true");
+assert(isset($decoded['inputWatts']), "JSON should have inputWatts");
+assert(isset($decoded['outputWatts']), "JSON should have outputWatts");
+assert(isset($decoded['dcInputWatts']), "JSON should have dcInputWatts");
 echo "✅ JSON: " . substr($json, 0, 100) . "...\n\n";
 
 // Test 4: JSON to Command
@@ -496,6 +502,20 @@ class MqttBridge
 
         // Publish initial bridge status
         $this->publishBridgeStatus();
+
+        // Setup broker message loop (process incoming commands from broker)
+        $this->loop->addPeriodicTimer(0.1, function() {
+            if ($this->brokerClient !== null) {
+                try {
+                    // Process pending messages from local broker (non-blocking)
+                    $this->brokerClient->loop(true);
+                } catch (\Exception $e) {
+                    $this->logger->error('Broker message loop error', [
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+        });
 
         // Setup status publish timer (every 60s)
         $this->loop->addPeriodicTimer(
@@ -798,19 +818,37 @@ class MqttBridge
     private function maskEmail(string $email): string
     {
         [$local, $domain] = explode('@', $email);
-        $masked = substr($local, 0, 2) . '***@' . $domain;
-        return $masked;
+
+        if (strlen($local) <= 2) {
+            return $email; // Too short to mask meaningfully
+        }
+
+        $masked = $local[0] . '***' . $local[strlen($local) - 1];
+        return "$masked@$domain";
     }
 }
 ```
 
+**Important Notes:**
+
+1. **Broker Message Loop**: The `php-mqtt/client` for the local Mosquitto broker requires periodic `loop()` calls to process incoming messages. Without this, the bridge would be **deaf to commands** from Home Assistant/Node-RED!
+
+2. **Hybrid Polling Approach**: Unlike `AsyncCloudClient` (pure event-based), the broker connection uses polling because `php-mqtt/client` doesn't integrate with ReactPHP streams. This is acceptable because:
+   - Only ONE broker connection (vs. potentially many cloud connections)
+   - Local network latency is negligible (<1ms)
+   - 100ms polling interval is sufficient for manual commands
+
+3. **Power Metrics**: The JSON payload includes `inputWatts`, `outputWatts`, and `dcInputWatts` as specified in Phase 1.
+
+4. **Email Masking**: Uses the spec from `02-TOPICS-MESSAGES.md`: `j***n@example.com` (first + last char of local part).
+
 **Commit:**
 ```bash
 git add src/Bridge/MqttBridge.php
-git commit -m "feat(bridge): Implement MqttBridge with multi-account support"
+git commit -m "feat(bridge): Implement MqttBridge with broker message loop"
 ```
 
-**Deliverable:** ✅ MqttBridge base structure complete
+**Deliverable:** ✅ MqttBridge base structure complete with bidirectional communication
 
 ---
 
@@ -947,13 +985,29 @@ systemctl status mosquitto
 
 **Problem:** No state updates received
 
-**Solution:** Check AsyncCloudClient subscriptions and message loop
+**Solution:**
+1. Check AsyncCloudClient event handlers are registered
+2. Verify cloud client subscriptions (check logs for SUBACK)
+3. Enable DEBUG logging to see incoming MQTT packets
 
 ---
 
-**Problem:** Commands don't reach device
+**Problem:** Commands don't reach device (CRITICAL!)
 
-**Solution:** Verify topic translation and MAC extraction logic
+**Solution:** This is caused by missing broker message loop!
+1. Verify `addPeriodicTimer(0.1, ... brokerClient->loop())` exists in `MqttBridge::run()`
+2. Check logs for "Broker message loop error"
+3. Test broker subscription manually:
+```bash
+mosquitto_pub -t 'fossibot/7C2C67AB5F0E/command' -m '{"action":"usb_on"}'
+# Should see "Command forwarded to cloud" in logs
+```
+
+---
+
+**Problem:** Missing power metrics in JSON
+
+**Solution:** Verify `stateToJson()` includes `inputWatts`, `outputWatts`, `dcInputWatts`
 
 ---
 
