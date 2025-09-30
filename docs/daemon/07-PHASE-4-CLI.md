@@ -301,13 +301,12 @@ $logger->info('Fossibot MQTT Bridge starting', [
 ]);
 
 try {
-    $loop = Loop::get();
-    $bridge = new MqttBridge($config, $loop, $logger);
+    $bridge = new MqttBridge($config, $logger);
 
     echo "Starting bridge (press Ctrl+C to stop)...\n";
     echo "═══════════════════════════════════════\n\n";
 
-    $bridge->start();
+    $bridge->run();
 
 } catch (\Throwable $e) {
     $logger->critical('Bridge startup failed', [
