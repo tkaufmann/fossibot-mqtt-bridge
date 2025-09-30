@@ -129,14 +129,34 @@ class MqttBridge
         $this->logger->info('MqttBridge shutting down...');
         $this->running = false;
 
+        // Publish offline status to broker
+        if ($this->brokerClient !== null) {
+            $this->brokerClient->publish(
+                'fossibot/bridge/status',
+                'offline',
+                1,
+                true
+            );
+
+            // Publish device offline status
+            foreach ($this->cloudClients as $email => $client) {
+                foreach ($client->getDevices() as $device) {
+                    $mac = $device->getMqttId();
+                    $this->brokerClient->publish(
+                        "fossibot/$mac/availability",
+                        'offline',
+                        1,
+                        true
+                    );
+                }
+            }
+        }
+
         // Disconnect all cloud clients
         foreach ($this->cloudClients as $email => $client) {
             $this->logger->info('Disconnecting cloud client', ['email' => $email]);
             $client->disconnect();
         }
-
-        // Publish offline status
-        $this->publishBridgeStatus('offline');
 
         // Disconnect broker
         if ($this->brokerClient !== null) {
@@ -145,6 +165,8 @@ class MqttBridge
 
         // Stop event loop
         $this->loop->stop();
+
+        $this->logger->info('MqttBridge stopped');
     }
 
     // --- Private Methods ---
@@ -152,20 +174,15 @@ class MqttBridge
     private function setupSignalHandlers(): void
     {
         // SIGTERM (systemd stop)
-        pcntl_signal(SIGTERM, function() {
-            $this->logger->info('Received SIGTERM');
+        $this->loop->addSignal(SIGTERM, function() {
+            $this->logger->info('Received SIGTERM, shutting down gracefully');
             $this->shutdown();
         });
 
         // SIGINT (Ctrl+C)
-        pcntl_signal(SIGINT, function() {
-            $this->logger->info('Received SIGINT');
+        $this->loop->addSignal(SIGINT, function() {
+            $this->logger->info('Received SIGINT, shutting down gracefully');
             $this->shutdown();
-        });
-
-        // Dispatch signals in event loop
-        $this->loop->addPeriodicTimer(1, function() {
-            pcntl_signal_dispatch();
         });
     }
 
