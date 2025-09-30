@@ -103,6 +103,25 @@ final class Connection {
 		$this->authState = AuthState::FULLY_CONNECTED;
 	}
 
+	/**
+	 * Performs only authentication (Stages 1-3) without establishing MQTT connection.
+	 * Used by AsyncCloudClient to obtain tokens for async WebSocket connection.
+	 */
+	public function authenticateOnly(): void {
+		$this->logger->info( 'Starting Fossibot API authentication (token acquisition only)' );
+
+		$this->anonymousToken = $this->s1_performAnonymousAuth();
+		$this->logger->debug( 'Stage 1 completed: Anonymous token acquired' );
+
+		$this->loginToken = $this->s2_performLogin();
+		$this->logger->debug( 'Stage 2 completed: Login token acquired' );
+
+		$this->mqttToken = $this->s3_performMqttAuth();
+		$this->logger->debug( 'Stage 3 completed: MQTT token acquired' );
+
+		$this->authState = AuthState::STAGE3_COMPLETED;
+	}
+
 	public function isConnected(): bool {
 		return $this->authState === AuthState::FULLY_CONNECTED;
 	}

@@ -4,7 +4,8 @@
       "Bash(composer:*)",
       "Bash(php:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(daemon/fossibot-bridge.php --version)"
     ],
     "deny": [],
     "ask": []

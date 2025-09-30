@@ -85,19 +85,23 @@ class AsyncCloudClient extends EventEmitter
             'email' => $this->email
         ]);
 
-        // Phase 1: Authenticate (synchronous, uses existing Connection)
+        // Phase 1: Authenticate (HTTP tokens only, Stages 1-3)
         return $this->authenticate()
             ->then(function() {
-                // Phase 2: Connect WebSocket
+                // Phase 2: Discover devices (HTTP API)
+                return $this->discoverDevices();
+            })
+            ->then(function() {
+                // Phase 3: Connect WebSocket (async)
                 return $this->connectWebSocket();
             })
             ->then(function() {
-                // Phase 3: Setup MQTT over WebSocket (event-based)
+                // Phase 4: Setup MQTT over WebSocket (event-based)
                 return $this->setupMqtt();
             })
             ->then(function() {
-                // Phase 4: Discover and subscribe to devices
-                return $this->discoverDevices();
+                // Phase 5: Subscribe to device topics
+                return $this->subscribeToDeviceTopics();
             })
             ->then(function() {
                 $this->connected = true;
@@ -442,7 +446,7 @@ class AsyncCloudClient extends EventEmitter
 
     private function authenticate(): PromiseInterface
     {
-        // Reuse existing Connection class for 3-stage auth
+        // Reuse existing Connection class for 3-stage auth (Stages 1-3 only)
         $this->connection = new Connection(
             $this->email,
             $this->password,
@@ -451,7 +455,8 @@ class AsyncCloudClient extends EventEmitter
 
         try {
             // This is synchronous but fast (~1-2 seconds)
-            $this->connection->connect();
+            // Only performs token acquisition (Stages 1-3), no WebSocket connection
+            $this->connection->authenticateOnly();
 
             // Extract MQTT token expiry from Connection object
             $mqttToken = $this->connection->getMqttToken();
@@ -590,13 +595,26 @@ class AsyncCloudClient extends EventEmitter
     private function discoverDevices(): PromiseInterface
     {
         try {
+            // Use Connection's HTTP-based device discovery
             $this->devices = $this->connection->getDevices();
 
-            $this->logger->info('Devices discovered', [
+            $this->logger->info('Devices discovered via HTTP API', [
                 'count' => count($this->devices)
             ]);
 
-            // Subscribe to device topics
+            return \React\Promise\resolve(null);
+        } catch (\Exception $e) {
+            $this->logger->error('Device discovery failed', [
+                'error' => $e->getMessage()
+            ]);
+            return \React\Promise\reject($e);
+        }
+    }
+
+    private function subscribeToDeviceTopics(): PromiseInterface
+    {
+        try {
+            // Subscribe to MQTT topics for all discovered devices
             foreach ($this->devices as $device) {
                 $mac = $device->getMqttId();
                 // Subscribe to all response topics:
@@ -606,8 +624,15 @@ class AsyncCloudClient extends EventEmitter
                 $this->subscribe("$mac/device/response/state");
             }
 
+            $this->logger->debug('Subscribed to device topics', [
+                'device_count' => count($this->devices)
+            ]);
+
             return \React\Promise\resolve(null);
         } catch (\Exception $e) {
+            $this->logger->error('Topic subscription failed', [
+                'error' => $e->getMessage()
+            ]);
             return \React\Promise\reject($e);
         }
     }
