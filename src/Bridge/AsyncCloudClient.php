@@ -120,6 +120,7 @@ class AsyncCloudClient extends EventEmitter
     {
         $this->logger->info('AsyncCloudClient disconnecting');
 
+        $this->running = false; // Prevent auto-reconnect
         $this->connected = false;
 
         // Send MQTT DISCONNECT packet
@@ -451,6 +452,16 @@ class AsyncCloudClient extends EventEmitter
         try {
             // This is synchronous but fast (~1-2 seconds)
             $this->connection->connect();
+
+            // Extract MQTT token expiry from Connection object
+            $mqttToken = $this->connection->getMqttToken();
+            if (isset($mqttToken['token'])) {
+                $this->mqttTokenExpiresAt = $this->extractJwtExpiry($mqttToken['token']);
+            }
+
+            // Login token expiry is ~14 years, rarely expires
+            // Could be extracted here if Connection exposes it
+
             return \React\Promise\resolve(null);
         } catch (\Exception $e) {
             return \React\Promise\reject($e);
@@ -474,6 +485,31 @@ class AsyncCloudClient extends EventEmitter
             function(WebSocket $conn) {
                 $this->websocket = $conn;
                 $this->logger->info('WebSocket connected with MQTT subprotocol');
+
+                // Register disconnect handler for auto-reconnect
+                $conn->on('close', function($code = null, $reason = null) {
+                    $this->logger->warning('WebSocket closed', [
+                        'code' => $code,
+                        'reason' => $reason
+                    ]);
+
+                    $this->connected = false;
+                    $this->emit('disconnect');
+
+                    // Auto-reconnect if not manually disconnected
+                    if ($this->running && !$this->reconnecting) {
+                        $this->loop->futureTick(function() {
+                            $this->reconnect(false); // Try Tier 1 first
+                        });
+                    }
+                });
+
+                // Register error handler
+                $conn->on('error', function(\Exception $e) {
+                    $this->logger->error('WebSocket error', ['error' => $e->getMessage()]);
+                    $this->emit('error', [$e]);
+                });
+
                 return $conn;
             },
             function(\Exception $e) {
@@ -496,20 +532,10 @@ class AsyncCloudClient extends EventEmitter
         $password = $mqttToken['password'] ?? '';
         $clientId = 'fossibot_async_' . uniqid();
 
-        // Register event handlers on WebSocket stream
+        // Register message handler on WebSocket stream
+        // (close and error handlers are registered in connectWebSocket())
         $this->websocket->on('message', function($message) {
             $this->handleMqttData($message->getPayload());
-        });
-
-        $this->websocket->on('close', function() {
-            $this->logger->warning('WebSocket closed');
-            $this->connected = false;
-            $this->emit('disconnect');
-        });
-
-        $this->websocket->on('error', function(\Exception $e) {
-            $this->logger->error('WebSocket error', ['error' => $e->getMessage()]);
-            $this->emit('error', [$e]);
         });
 
         // Build and send MQTT CONNECT packet
@@ -545,6 +571,15 @@ class AsyncCloudClient extends EventEmitter
             } else {
                 $error = new \RuntimeException("MQTT connection refused: code $returnCode");
                 $this->logger->error('MQTT connection refused', ['code' => $returnCode]);
+
+                // CONNACK code 5 = Not authorized → force re-auth
+                if ($returnCode === 5) {
+                    $this->logger->warning('MQTT auth failed, scheduling re-auth');
+                    $this->loop->futureTick(function() {
+                        $this->reconnect(true); // Force Tier 2 re-auth
+                    });
+                }
+
                 $deferred->reject($error);
             }
         });
@@ -753,5 +788,21 @@ class AsyncCloudClient extends EventEmitter
             $this->mqttPacketId = 1;
         }
         return $id;
+    }
+
+    /**
+     * Extracts expiry timestamp from JWT token.
+     */
+    private function extractJwtExpiry(string $jwt): ?int
+    {
+        $parts = explode('.', $jwt);
+        if (count($parts) !== 3) {
+            return null;
+        }
+
+        // Decode JWT payload (second part)
+        $payload = json_decode(base64_decode($parts[1]), true);
+
+        return $payload['exp'] ?? null;
     }
 }
