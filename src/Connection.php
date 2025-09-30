@@ -100,8 +100,7 @@ final class Connection {
 		$this->mqttToken = $this->s3_performMqttAuth();
 		$this->logger->info( 'Stage 3 completed: MQTT token acquired' );
 
-		$this->mqttClient = $this->s4_connectMqtt();
-		$this->logger->info( 'Stage 4 completed: MQTT WebSocket connected' );
+		$this->authState = AuthState::FULLY_CONNECTED;
 	}
 
 	public function isConnected(): bool {
@@ -122,6 +121,18 @@ final class Connection {
 
 	public function hasMqttToken(): bool {
 		return $this->mqttToken !== NULL;
+	}
+
+	public function getMqttToken(): array {
+		if ( $this->mqttToken === NULL ) {
+			throw new \RuntimeException( 'MQTT token not available. Call connect() first.' );
+		}
+
+		return [
+			'username' => $this->mqttToken->accessToken,
+			'password' => 'helloyou',
+			'token' => $this->mqttToken->accessToken,
+		];
 	}
 
 	public function hasMqttClient(): bool {

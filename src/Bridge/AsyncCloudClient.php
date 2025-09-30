@@ -207,7 +207,7 @@ class AsyncCloudClient extends EventEmitter
         try {
             // This is synchronous but fast (~1-2 seconds)
             $this->connection->connect();
-            return \React\Promise\resolve();
+            return \React\Promise\resolve(null);
         } catch (\Exception $e) {
             return \React\Promise\reject($e);
         }
@@ -217,12 +217,12 @@ class AsyncCloudClient extends EventEmitter
     {
         $wsConnector = new WebSocketConnector($this->loop);
 
-        // Get MQTT broker URL from Connection
-        $mqttUrl = 'wss://mqtt.sydpower.com:8083/mqtt';
+        // Port 8083 uses unencrypted WebSocket (ws://), not wss://
+        $mqttUrl = 'ws://mqtt.sydpower.com:8083/mqtt';
 
         $this->logger->debug('Connecting WebSocket', ['url' => $mqttUrl]);
 
-        return $wsConnector($mqttUrl)->then(
+        return $wsConnector($mqttUrl, ['mqtt'])->then(
             function(WebSocket $conn) {
                 $this->websocket = $conn;
                 $this->logger->debug('WebSocket connected');
@@ -259,7 +259,7 @@ class AsyncCloudClient extends EventEmitter
 
         // Build and send MQTT CONNECT packet
         $connectPacket = $this->buildConnectPacket($clientId, $username, $password);
-        $this->websocket->send($connectPacket);
+        $this->websocket->send($connectPacket, 'binary');
 
         $this->logger->debug('Sent MQTT CONNECT packet');
 
