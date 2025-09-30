@@ -325,7 +325,11 @@ class AsyncCloudClient extends EventEmitter
             // Subscribe to device topics
             foreach ($this->devices as $device) {
                 $mac = $device->getMqttId();
-                $this->subscribe("$mac/device/response/+");
+                // Subscribe to all response topics:
+                // - {mac}/device/response/client/+ (catches /04 and /data)
+                // - {mac}/device/response/state
+                $this->subscribe("$mac/device/response/client/+");
+                $this->subscribe("$mac/device/response/state");
             }
 
             return \React\Promise\resolve(null);
