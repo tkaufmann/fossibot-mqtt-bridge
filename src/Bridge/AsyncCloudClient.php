@@ -111,13 +111,50 @@ class AsyncCloudClient extends EventEmitter
         // Send MQTT DISCONNECT packet
         if ($this->websocket !== null) {
             $disconnectPacket = "\xe0\x00"; // DISCONNECT packet
-            $this->websocket->send($disconnectPacket);
+            $frame = new \Ratchet\RFC6455\Messaging\Frame($disconnectPacket, true, \Ratchet\RFC6455\Messaging\Frame::OP_BINARY);
+            $this->websocket->send($frame);
             $this->websocket->close();
+            $this->websocket = null;
         }
 
         $this->emit('disconnect');
 
-        return \React\Promise\resolve();
+        return \React\Promise\resolve(null);
+    }
+
+    /**
+     * Attempt reconnection (called by MqttBridge).
+     *
+     * @return PromiseInterface Resolves when reconnected
+     */
+    public function reconnect(): PromiseInterface
+    {
+        $this->logger->info('AsyncCloudClient attempting reconnect');
+
+        // Disconnect cleanly first
+        if ($this->connected) {
+            $this->disconnect();
+        }
+
+        // Wait 1 second before reconnecting
+        $deferred = new \React\Promise\Deferred();
+
+        $this->loop->addTimer(1.0, function() use ($deferred) {
+            $this->connect()->then(
+                function() use ($deferred) {
+                    $this->logger->info('AsyncCloudClient reconnect successful');
+                    $deferred->resolve(null);
+                },
+                function($error) use ($deferred) {
+                    $this->logger->error('AsyncCloudClient reconnect failed', [
+                        'error' => $error->getMessage()
+                    ]);
+                    $deferred->reject($error);
+                }
+            );
+        });
+
+        return $deferred->promise();
     }
 
     /**
