@@ -572,7 +572,117 @@ git commit -m "feat(bridge): Create bridge component directory structure"
 
 ---
 
-### Step 0.6: Verify Existing Components (15 min)
+### Step 0.6: Setup Test Infrastructure (15 min)
+
+**⚠️ IMPORTANT:** Set up the test infrastructure NOW, before implementing new components. This allows you to write tests as you implement each phase, following test-driven development principles.
+
+**Install PHPUnit:**
+```bash
+composer require --dev phpunit/phpunit ^10.5
+```
+
+**Create directory structure:**
+```bash
+mkdir -p tests/{Unit,Integration,System}
+```
+
+**File:** `tests/bootstrap.php`
+
+```php
+<?php
+// ABOUTME: Test suite bootstrap - loads autoloader and test utilities
+
+declare(strict_types=1);
+
+// Autoloader
+require __DIR__ . '/../vendor/autoload.php';
+
+// Load .env for credentials
+if (file_exists(__DIR__ . '/../.env')) {
+    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
+    $dotenv->load();
+}
+
+// Test helpers
+function getTestEmail(): string
+{
+    $email = getenv('FOSSIBOT_EMAIL');
+    if (empty($email)) {
+        throw new \RuntimeException('FOSSIBOT_EMAIL not set in .env');
+    }
+    return $email;
+}
+
+function getTestPassword(): string
+{
+    $password = getenv('FOSSIBOT_PASSWORD');
+    if (empty($password)) {
+        throw new \RuntimeException('FOSSIBOT_PASSWORD not set in .env');
+    }
+    return $password;
+}
+
+function createTestLogger(): \Psr\Log\LoggerInterface
+{
+    $logger = new \Monolog\Logger('test');
+    $logger->pushHandler(new \Monolog\Handler\StreamHandler('php://stdout', \Monolog\Logger::DEBUG));
+    return $logger;
+}
+```
+
+**File:** `phpunit.xml`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         verbose="true">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+        <testsuite name="System">
+            <directory>tests/System</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+    </php>
+</phpunit>
+```
+
+**Verify test infrastructure:**
+```bash
+# Should show empty test suites (no tests yet)
+vendor/bin/phpunit --list-suites
+```
+
+**Expected output:**
+```
+Available test suite(s):
+ - Unit
+ - Integration
+ - System
+```
+
+**Commit:**
+```bash
+git add tests/ phpunit.xml
+git commit -m "test: Add test infrastructure and PHPUnit config"
+```
+
+**Deliverable:** ✅ Test infrastructure ready for use
+
+**📖 Note:** For detailed testing strategy and philosophy, see `docs/daemon/09-TESTING.md`. Write tests for each component as you implement it in Phases 1-4.
+
+---
+
+### Step 0.7: Verify Existing Components (15 min)
 
 **Test existing components still work:**
 
@@ -663,7 +773,8 @@ git commit -m "test: Verify existing components still functional"
 - [ ] `.gitignore` updated for `config.json` and `logs/` - **Step 0.3**
 - [ ] Mosquitto installed and running - **Step 0.4**
 - [ ] Bridge directory structure created - **Step 0.5**
-- [ ] Existing components verified working - **Step 0.6**
+- [ ] Test infrastructure setup (PHPUnit, tests/ directories) - **Step 0.6**
+- [ ] Existing components verified working - **Step 0.7**
 - [ ] All test scripts pass
 - [ ] All commits made with proper messages
 
@@ -678,9 +789,10 @@ git commit -m "test: Verify existing components still functional"
 3. `test_react_installation.php` passes
 4. `test_config_load.php` passes
 5. `test_mosquitto.php` passes
-6. `test_existing_components.php` passes
-7. `src/Bridge/` directory exists with placeholder files
-8. Git history is clean with descriptive commits
+6. PHPUnit test infrastructure is set up (`vendor/bin/phpunit --list-suites` works)
+7. `test_existing_components.php` passes
+8. `src/Bridge/` directory exists with placeholder files
+9. Git history is clean with descriptive commits
 
 ---
 

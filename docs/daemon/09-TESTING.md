@@ -114,97 +114,21 @@ tests/
 
 ## 📋 Implementation Guide
 
-### Step 1: Setup Test Infrastructure (15 min)
+### Prerequisites
 
-**Install PHPUnit:**
-```bash
-composer require --dev phpunit/phpunit ^10.5
-```
+**⚠️ IMPORTANT:** The test infrastructure (PHPUnit, `tests/` directories, `phpunit.xml`) must be set up in **Phase 0, Step 0.6** before starting with test implementation. If you haven't completed Phase 0 yet, do that first.
 
-**Create directory structure:**
-```bash
-mkdir -p tests/{Unit,Integration,System}
-```
+This document assumes:
+- PHPUnit is installed (`composer require --dev phpunit/phpunit ^10.5`)
+- Test directories exist (`tests/Unit/`, `tests/Integration/`, `tests/System/`)
+- `tests/bootstrap.php` is created with helper functions
+- `phpunit.xml` is configured
 
-**File:** `tests/bootstrap.php`
-
-```php
-<?php
-// ABOUTME: Test suite bootstrap - loads autoloader and test utilities
-
-declare(strict_types=1);
-
-// Autoloader
-require __DIR__ . '/../vendor/autoload.php';
-
-// Load .env for credentials
-if (file_exists(__DIR__ . '/../.env')) {
-    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
-    $dotenv->load();
-}
-
-// Test helpers
-function getTestEmail(): string
-{
-    $email = getenv('FOSSIBOT_EMAIL');
-    if (empty($email)) {
-        throw new \RuntimeException('FOSSIBOT_EMAIL not set in .env');
-    }
-    return $email;
-}
-
-function getTestPassword(): string
-{
-    $password = getenv('FOSSIBOT_PASSWORD');
-    if (empty($password)) {
-        throw new \RuntimeException('FOSSIBOT_PASSWORD not set in .env');
-    }
-    return $password;
-}
-
-function createTestLogger(): \Psr\Log\LoggerInterface
-{
-    $logger = new \Monolog\Logger('test');
-    $logger->pushHandler(new \Monolog\Handler\StreamHandler('php://stdout', \Monolog\Logger::DEBUG));
-    return $logger;
-}
-```
-
-**File:** `phpunit.xml`
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
-         bootstrap="tests/bootstrap.php"
-         colors="true"
-         verbose="true">
-    <testsuites>
-        <testsuite name="Unit">
-            <directory>tests/Unit</directory>
-        </testsuite>
-        <testsuite name="Integration">
-            <directory>tests/Integration</directory>
-        </testsuite>
-        <testsuite name="System">
-            <directory>tests/System</directory>
-        </testsuite>
-    </testsuites>
-    <php>
-        <env name="APP_ENV" value="testing"/>
-    </php>
-</phpunit>
-```
-
-**Commit:**
-```bash
-git add tests/ phpunit.xml
-git commit -m "test: Add test infrastructure and PHPUnit config"
-```
+See `03-PHASE-0-SETUP.md` Step 0.6 for setup instructions.
 
 ---
 
-### Step 2: Unit Tests (30 min)
+### Step 1: Unit Tests (30 min)
 
 **File:** `tests/Unit/TopicTranslatorTest.php`
 
@@ -239,7 +163,7 @@ class TopicTranslatorTest extends TestCase
     public function testCloudToBrokerDataTranslation(): void
     {
         $cloudTopic = '7C2C67AB5F0E/device/response/client/data';
-        $expected = 'fossibot/7C2C67AB5F0E/settings';
+        $expected = 'fossibot/7C2C67AB5F0E/state';
 
         $result = $this->translator->cloudToBroker($cloudTopic);
 
@@ -485,7 +409,7 @@ git commit -m "test: Add unit tests for TopicTranslator, PayloadTransformer, Dev
 
 ---
 
-### Step 3: Integration Tests (45 min)
+### Step 2: Integration Tests (45 min)
 
 **File:** `tests/Integration/AsyncCloudClientTest.php`
 
@@ -732,7 +656,7 @@ git commit -m "test: Add integration tests for AsyncCloudClient and reconnect lo
 
 ---
 
-### Step 4: System Tests (30 min)
+### Step 3: System Tests (30 min)
 
 **File:** `tests/System/DaemonLifecycleTest.php`
 
@@ -849,7 +773,7 @@ git commit -m "test: Add system tests for daemon lifecycle"
 
 ---
 
-### Step 5: Test Runner Script (15 min)
+### Step 4: Test Runner Script (15 min)
 
 **File:** `run-tests.sh`
 
