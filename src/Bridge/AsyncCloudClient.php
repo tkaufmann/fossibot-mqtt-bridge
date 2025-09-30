@@ -1205,8 +1205,17 @@ class AsyncCloudClient extends EventEmitter
         $dnsResolverFactory = new \React\Dns\Resolver\Factory();
         $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
 
-        // Create socket connector with explicit DNS resolver and timeout
-        $socketConnector = new \React\Socket\Connector([
+        // TLS context for HTTPS certificate validation
+        $context = [
+            'tls' => [
+                'verify_peer' => true,
+                'verify_peer_name' => true,
+                'cafile' => __DIR__ . '/../../config/cacert.pem'
+            ]
+        ];
+
+        // Create socket connector with TLS context, DNS resolver and timeout
+        $socketConnector = new \React\Socket\Connector($context + [
             'dns' => $dns,
             'timeout' => 15.0,
         ]);
