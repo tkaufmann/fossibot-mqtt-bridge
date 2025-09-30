@@ -66,6 +66,9 @@ class AsyncCloudClient extends EventEmitter
     private ?string $mqttToken = null;
     private string $deviceId;
 
+    // HTTP Browser (must persist to prevent GC cleanup during async requests)
+    private ?\React\Http\Browser $browser = null;
+
     public function __construct(
         string $email,
         string $password,
@@ -463,23 +466,26 @@ class AsyncCloudClient extends EventEmitter
             'email' => $this->email
         ]);
 
-        $browser = $this->createBrowser();
+        // Create Browser only once and store as class property to prevent GC cleanup
+        if ($this->browser === null) {
+            $this->browser = $this->createBrowser();
+        }
 
         // Stage 1: Anonymous Token
-        return $this->stage1_getAnonymousToken($browser)
-            ->then(function(string $anonToken) use ($browser) {
+        return $this->stage1_getAnonymousToken($this->browser)
+            ->then(function(string $anonToken) {
                 $this->anonymousToken = $anonToken;
                 $this->logger->info('Stage 1 completed: Anonymous token acquired');
 
                 // Stage 2: Login Token
-                return $this->stage2_login($browser, $anonToken);
+                return $this->stage2_login($this->browser, $anonToken);
             })
-            ->then(function(string $loginToken) use ($browser) {
+            ->then(function(string $loginToken) {
                 $this->loginToken = $loginToken;
                 $this->logger->info('Stage 2 completed: Login token acquired');
 
                 // Stage 3: MQTT Token
-                return $this->stage3_getMqttToken($browser, $this->anonymousToken, $loginToken);
+                return $this->stage3_getMqttToken($this->browser, $this->anonymousToken, $loginToken);
             })
             ->then(function(string $mqttToken) {
                 $this->mqttToken = $mqttToken;
@@ -647,9 +653,12 @@ class AsyncCloudClient extends EventEmitter
      */
     private function discoverDevices(): PromiseInterface
     {
-        $browser = $this->createBrowser();
+        // Reuse existing browser instance (created in authenticate())
+        if ($this->browser === null) {
+            $this->browser = $this->createBrowser();
+        }
 
-        return $this->fetchDevices($browser, $this->anonymousToken, $this->loginToken)
+        return $this->fetchDevices($this->browser, $this->anonymousToken, $this->loginToken)
             ->then(function(array $devices) {
                 $this->devices = $devices;
                 return null;
