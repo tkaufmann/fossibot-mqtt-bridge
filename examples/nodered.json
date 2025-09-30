@@ -1,0 +1,96 @@
+[
+  {
+    "id": "mqtt-in-state",
+    "type": "mqtt in",
+    "name": "Fossibot State",
+    "topic": "fossibot/+/state",
+    "qos": "1",
+    "broker": "local-broker",
+    "outputs": 1,
+    "x": 120,
+    "y": 100,
+    "wires": [["parse-state"]]
+  },
+  {
+    "id": "parse-state",
+    "type": "json",
+    "name": "Parse State",
+    "x": 310,
+    "y": 100,
+    "wires": [["extract-soc", "debug-state"]]
+  },
+  {
+    "id": "extract-soc",
+    "type": "function",
+    "name": "Extract SoC",
+    "func": "msg.payload = {\n    mac: msg.topic.split('/')[1],\n    soc: msg.payload.soc,\n    timestamp: msg.payload.timestamp\n};\nreturn msg;",
+    "x": 490,
+    "y": 100,
+    "wires": [["soc-gauge"]]
+  },
+  {
+    "id": "debug-state",
+    "type": "debug",
+    "name": "Debug State",
+    "x": 490,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "soc-gauge",
+    "type": "ui_gauge",
+    "name": "Battery %",
+    "group": "fossibot-dashboard",
+    "min": 0,
+    "max": 100,
+    "unit": "%",
+    "x": 670,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "inject-usb-on",
+    "type": "inject",
+    "name": "USB On",
+    "topic": "fossibot/7C2C67AB5F0E/command",
+    "payload": "{\"action\":\"usb_on\"}",
+    "payloadType": "str",
+    "repeat": "",
+    "once": false,
+    "x": 120,
+    "y": 260,
+    "wires": [["mqtt-out-command"]]
+  },
+  {
+    "id": "inject-usb-off",
+    "type": "inject",
+    "name": "USB Off",
+    "topic": "fossibot/7C2C67AB5F0E/command",
+    "payload": "{\"action\":\"usb_off\"}",
+    "payloadType": "str",
+    "repeat": "",
+    "once": false,
+    "x": 120,
+    "y": 300,
+    "wires": [["mqtt-out-command"]]
+  },
+  {
+    "id": "mqtt-out-command",
+    "type": "mqtt out",
+    "name": "Send Command",
+    "topic": "",
+    "qos": "1",
+    "broker": "local-broker",
+    "x": 330,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "local-broker",
+    "type": "mqtt-broker",
+    "name": "Local Mosquitto",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "nodered-fossibot"
+  }
+]
