@@ -35,6 +35,11 @@ class MqttBridge
     private bool $running = false;
     private int $startTime = 0;
 
+    // Broker reconnect state
+    private int $brokerReconnectAttempt = 0;
+    private int $maxBrokerReconnectAttempts = 5;
+    private array $brokerBackoffDelays = [5, 10, 15, 30, 60]; // seconds
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -79,6 +84,24 @@ class MqttBridge
                     $this->logger->error('Broker message loop error', [
                         'error' => $e->getMessage()
                     ]);
+                }
+            }
+        });
+
+        // Setup broker health check (every 30 seconds)
+        $this->loop->addPeriodicTimer(30, function() {
+            if ($this->brokerClient !== null) {
+                try {
+                    // The loop() call will throw if connection is dead
+                    $this->brokerClient->loop(true);
+                } catch (\Exception $e) {
+                    $this->logger->warning('Broker health check failed, reconnecting', [
+                        'error' => $e->getMessage()
+                    ]);
+
+                    // Trigger reconnect
+                    $this->brokerClient = null;
+                    $this->connectBroker();
                 }
             }
         });
@@ -219,28 +242,74 @@ class MqttBridge
 
         $this->logger->info('Connecting to local broker', [
             'host' => $host,
-            'port' => $port
+            'port' => $port,
+            'attempt' => $this->brokerReconnectAttempt + 1
         ]);
 
-        $this->brokerClient = new MqttClient($host, $port, $clientId);
+        try {
+            $this->brokerClient = new MqttClient($host, $port, $clientId);
 
-        $settings = (new ConnectionSettings)
-            ->setKeepAliveInterval(60)
-            ->setUseTls(false);
+            $settings = (new ConnectionSettings)
+                ->setKeepAliveInterval(60)
+                ->setUseTls(false)
+                ->setLastWillTopic('fossibot/bridge/status')
+                ->setLastWillMessage('offline')
+                ->setLastWillQualityOfService(1)
+                ->setRetainLastWill(true);
 
-        if (!empty($this->config['mosquitto']['username'])) {
-            $settings->setUsername($this->config['mosquitto']['username']);
-            $settings->setPassword($this->config['mosquitto']['password']);
+            if (!empty($this->config['mosquitto']['username'])) {
+                $settings->setUsername($this->config['mosquitto']['username']);
+                $settings->setPassword($this->config['mosquitto']['password']);
+            }
+
+            $this->brokerClient->connect($settings, true);
+
+            // Subscribe to command topics
+            $this->brokerClient->subscribe('fossibot/+/command', function($topic, $payload) {
+                $this->handleBrokerCommand($topic, $payload);
+            }, 1);
+
+            $this->logger->info('Connected to local broker');
+
+            // Reset reconnect counter on success
+            $this->brokerReconnectAttempt = 0;
+
+        } catch (\Exception $e) {
+            $this->handleBrokerConnectionFailure($e);
+        }
+    }
+
+    /**
+     * Handles broker connection failure with exponential backoff.
+     */
+    private function handleBrokerConnectionFailure(\Exception $error): void
+    {
+        $this->brokerReconnectAttempt++;
+
+        if ($this->brokerReconnectAttempt > $this->maxBrokerReconnectAttempts) {
+            $this->logger->critical('Failed to connect to local broker after max attempts', [
+                'attempts' => $this->brokerReconnectAttempt,
+                'error' => $error->getMessage()
+            ]);
+
+            // Don't give up completely - reset counter and continue trying
+            $this->brokerReconnectAttempt = 0;
+            $delay = $this->brokerBackoffDelays[count($this->brokerBackoffDelays) - 1];
+        } else {
+            $delayIndex = min($this->brokerReconnectAttempt - 1, count($this->brokerBackoffDelays) - 1);
+            $delay = $this->brokerBackoffDelays[$delayIndex];
         }
 
-        $this->brokerClient->connect($settings, true);
+        $this->logger->error('Failed to connect to local broker, retrying', [
+            'attempt' => $this->brokerReconnectAttempt,
+            'next_retry_in_seconds' => $delay,
+            'error' => $error->getMessage()
+        ]);
 
-        // Subscribe to command topics
-        $this->brokerClient->subscribe('fossibot/+/command', function($topic, $payload) {
-            $this->handleBrokerCommand($topic, $payload);
-        }, 1);
-
-        $this->logger->info('Connected to local broker');
+        // Schedule reconnect attempt
+        $this->loop->addTimer($delay, function() {
+            $this->connectBroker();
+        });
     }
 
     private function handleCloudMessage(string $accountEmail, string $topic, string $payload): void
