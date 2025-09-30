@@ -944,17 +944,17 @@ git commit -m "test: Add end-to-end bridge integration test"
 
 ## ✅ Phase 2 Completion Checklist
 
-- [ ] TopicTranslator implemented and tested
-- [ ] PayloadTransformer implemented and tested
-- [ ] MqttBridge multi-account structure complete
-- [ ] Cloud client event registration working
-- [ ] Local broker connection established
-- [ ] Cloud → Broker message flow working (state updates)
-- [ ] Broker → Cloud message flow working (commands)
-- [ ] Bridge status publishing functional
-- [ ] Device availability tracking working
-- [ ] All test scripts pass
-- [ ] Code committed with clear messages
+- [x] TopicTranslator implemented and tested
+- [x] PayloadTransformer implemented and tested
+- [x] MqttBridge multi-account structure complete
+- [x] Cloud client event registration working
+- [x] Local broker connection established
+- [x] Cloud → Broker message flow working (state updates)
+- [x] Broker → Cloud message flow working (commands)
+- [x] Bridge status publishing functional
+- [x] Device availability tracking working
+- [x] All test scripts pass
+- [x] Code committed with clear messages
 
 ---
 
