@@ -71,6 +71,9 @@ These topics are used between the bridge and smarthome clients.
 ```json
 {
     "soc": 85.5,
+    "inputWatts": 450,
+    "outputWatts": 120,
+    "dcInputWatts": 450,
     "usbOutput": true,
     "acOutput": false,
     "dcOutput": false,
@@ -87,6 +90,9 @@ These topics are used between the bridge and smarthome clients.
 | Field | Type | Unit | Range | Description |
 |-------|------|------|-------|-------------|
 | `soc` | float | % | 0.0 - 100.0 | State of Charge (battery percentage) |
+| `inputWatts` | int | W | 0 - 2400 | Total input power (all charging sources) |
+| `outputWatts` | int | W | 0 - 2400 | Total output power (all loads combined) |
+| `dcInputWatts` | int | W | 0 - 2400 | DC input power (solar/car charging) |
 | `usbOutput` | bool | - | true/false | USB ports power state |
 | `acOutput` | bool | - | true/false | AC outlets power state |
 | `dcOutput` | bool | - | true/false | DC ports power state |
@@ -96,6 +102,13 @@ These topics are used between the bridge and smarthome clients.
 | `acChargingUpperLimit` | float | % | 0.0 - 100.0 | AC charging stop percentage |
 | `timestamp` | string | ISO8601 | - | Last update time (UTC) |
 
+**Power Data Sources (Modbus Registers):**
+- `inputWatts` ← Register 6 (Total Input Power)
+- `outputWatts` ← Register 39 (Total Output Power)
+- `dcInputWatts` ← Register 4 (DC Input Power)
+
+**Note:** Remaining charge/discharge time is not available from device API. Clients can calculate estimated time using `(soc * capacity_wh) / outputWatts` for discharge or `((100 - soc) * capacity_wh) / inputWatts` for charging.
+
 ---
 
 #### 2. Device Availability
@@ -103,6 +116,7 @@ These topics are used between the bridge and smarthome clients.
 **Topic:** `fossibot/{mac}/availability`
 **Retained:** Yes
 **QoS:** 1
+**Last Will and Testament (LWT):** Configured
 
 **Payload:** Simple string (not JSON)
 
@@ -118,9 +132,27 @@ offline
 
 **When Published:**
 - `online` - When bridge successfully connects to device
-- `offline` - When bridge detects device disconnect or bridge shuts down
+- `offline` - When bridge detects device disconnect, graceful shutdown, **or bridge crashes**
 
-**Use Case:** Clients can check if a device is currently reachable
+**LWT Configuration:**
+
+The bridge configures MQTT Last Will and Testament during broker connection to ensure `offline` status is published even if bridge crashes unexpectedly:
+
+```php
+// During broker connection setup
+$connectionSettings = (new ConnectionSettings)
+    ->setLastWillTopic('fossibot/{mac}/availability')
+    ->setLastWillMessage('offline')
+    ->setLastWillQualityOfService(1)
+    ->setRetainLastWill(true);
+```
+
+**Robustness:**
+- **Graceful shutdown** (SIGTERM/SIGINT): Bridge explicitly publishes `offline` before disconnecting
+- **Unexpected disconnect** (crash, kill -9, network loss): Broker automatically publishes LWT `offline` after keep-alive timeout (~60 seconds)
+- **Bridge restart**: LWT ensures devices don't appear "stuck online" from previous session
+
+**Use Case:** Clients can reliably check if a device is currently reachable, even if bridge crashes
 
 ---
 
@@ -166,16 +198,44 @@ offline
 | `version` | string | Bridge software version |
 | `uptime_seconds` | int | Seconds since bridge started |
 | `accounts` | array | List of configured accounts |
-| `accounts[].email` | string | Account email (partially masked for privacy) |
+| `accounts[].email` | string | Account email (masked: `u***r@example.com`) |
 | `accounts[].connected` | bool | Cloud connection status for this account |
 | `accounts[].device_count` | int | Number of devices on this account |
 | `devices` | array | All discovered devices across all accounts |
 | `devices[].id` | string | Device MAC address (unique identifier) |
-| `devices[].name` | string | Human-readable device name |
-| `devices[].model` | string | Device model (F2400, F3000, etc.) |
+| `devices[].name` | string | Device name from Fossibot Cloud API (user-assigned via mobile app) |
+| `devices[].model` | string | Device model from Cloud API (F2400, F3000, etc.) |
 | `devices[].cloudConnected` | bool | Device reachability |
 | `devices[].lastSeen` | string | Last successful communication (ISO8601) |
 | `timestamp` | string | Status message timestamp (ISO8601) |
+
+**Data Sources:**
+- `devices[].name`: Retrieved from Fossibot Cloud API `device_info` field during Stage 4 (device discovery). This is the name users assign to their devices in the Fossibot mobile app (e.g., "Living Room Powerstation", "Garage Backup").
+- `devices[].model`: Retrieved from Cloud API `device_type` field (e.g., "F2400" for 2048Wh model).
+
+**Email Masking Rule:**
+Emails are masked to protect privacy in public status messages:
+- Keep first character
+- Mask middle characters with `***`
+- Keep last character before `@`
+- Keep full domain
+
+Examples:
+- `john@example.com` → `j***n@example.com`
+- `a@test.org` → `a@test.org` (too short to mask)
+- `sarah.miller@company.net` → `s***r@company.net`
+
+Implementation:
+```php
+function maskEmail(string $email): string {
+    [$local, $domain] = explode('@', $email);
+    if (strlen($local) <= 2) {
+        return $email; // Too short to mask meaningfully
+    }
+    $masked = $local[0] . '***' . $local[strlen($local) - 1];
+    return "$masked@$domain";
+}
+```
 
 ---
 
@@ -429,6 +489,20 @@ mqtt:
       unit_of_measurement: "%"
       device_class: battery
 
+    - name: "Fossibot Input Power"
+      state_topic: "fossibot/7C2C67AB5F0E/state"
+      value_template: "{{ value_json.inputWatts }}"
+      unit_of_measurement: "W"
+      device_class: power
+      icon: mdi:solar-power
+
+    - name: "Fossibot Output Power"
+      state_topic: "fossibot/7C2C67AB5F0E/state"
+      value_template: "{{ value_json.outputWatts }}"
+      unit_of_measurement: "W"
+      device_class: power
+      icon: mdi:power-plug
+
   binary_sensor:
     - name: "Fossibot Available"
       state_topic: "fossibot/7C2C67AB5F0E/availability"
@@ -443,6 +517,7 @@ mqtt:
       payload_off: '{"action":"usb_off"}'
       value_template: "{{ 'ON' if value_json.usbOutput else 'OFF' }}"
       optimistic: false
+      icon: mdi:usb
 ```
 
 ### Node-RED

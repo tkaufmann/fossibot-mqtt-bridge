@@ -79,7 +79,7 @@ sudo systemctl status fossibot-bridge
 #### Device State (Bridge → Clients)
 ```
 Topic: fossibot/{mac}/state
-Payload: {"soc": 85.5, "usbOutput": true, ...}
+Payload: {"soc": 85.5, "inputWatts": 450, "outputWatts": 120, "usbOutput": true, ...}
 QoS: 1, Retained: Yes
 ```
 
@@ -149,7 +149,7 @@ mkdir -p examples
 # ABOUTME: Home Assistant MQTT integration for Fossibot devices
 
 mqtt:
-  # Battery Sensor
+  # Battery & Power Sensors
   sensor:
     - name: "Fossibot Battery"
       unique_id: "fossibot_7c2c67ab5f0e_battery"
@@ -158,6 +158,22 @@ mqtt:
       unit_of_measurement: "%"
       device_class: battery
       icon: mdi:battery
+
+    - name: "Fossibot Input Power"
+      unique_id: "fossibot_7c2c67ab5f0e_input_power"
+      state_topic: "fossibot/7C2C67AB5F0E/state"
+      value_template: "{{ value_json.inputWatts }}"
+      unit_of_measurement: "W"
+      device_class: power
+      icon: mdi:solar-power
+
+    - name: "Fossibot Output Power"
+      unique_id: "fossibot_7c2c67ab5f0e_output_power"
+      state_topic: "fossibot/7C2C67AB5F0E/state"
+      value_template: "{{ value_json.outputWatts }}"
+      unit_of_measurement: "W"
+      device_class: power
+      icon: mdi:power-plug
 
     - name: "Fossibot Max Charging Current"
       unique_id: "fossibot_7c2c67ab5f0e_max_charging_current"
