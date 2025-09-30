@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Fossibot\Bridge;
 
 use Evenement\EventEmitter;
-use Fossibot\Connection;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Ratchet\Client\Connector as WebSocketConnector;
@@ -35,7 +34,6 @@ class AsyncCloudClient extends EventEmitter
     private LoopInterface $loop;
     private LoggerInterface $logger;
 
-    private ?Connection $connection = null;
     private ?WebSocket $websocket = null;
     private bool $connected = false;
 
@@ -62,6 +60,12 @@ class AsyncCloudClient extends EventEmitter
     // Running state (prevents auto-reconnect during shutdown)
     private bool $running = true;
 
+    // Authentication tokens (async auth)
+    private ?string $anonymousToken = null;
+    private ?string $loginToken = null;
+    private ?string $mqttToken = null;
+    private string $deviceId;
+
     public function __construct(
         string $email,
         string $password,
@@ -72,6 +76,7 @@ class AsyncCloudClient extends EventEmitter
         $this->password = $password;
         $this->loop = $loop;
         $this->logger = $logger ?? new NullLogger();
+        $this->deviceId = $this->generateDeviceId();
     }
 
     /**
@@ -444,33 +449,44 @@ class AsyncCloudClient extends EventEmitter
         return \React\Promise\resolve();
     }
 
+    /**
+     * Performs 3-stage authentication (async).
+     *
+     * Authenticates with Fossibot Cloud API and acquires all required tokens.
+     * This replaces the synchronous Connection::authenticateOnly() call.
+     *
+     * @return PromiseInterface Resolves when all tokens acquired
+     */
     private function authenticate(): PromiseInterface
     {
-        // Reuse existing Connection class for 3-stage auth (Stages 1-3 only)
-        $this->connection = new Connection(
-            $this->email,
-            $this->password,
-            $this->logger
-        );
+        $this->logger->info('Starting async authentication', [
+            'email' => $this->email
+        ]);
 
-        try {
-            // This is synchronous but fast (~1-2 seconds)
-            // Only performs token acquisition (Stages 1-3), no WebSocket connection
-            $this->connection->authenticateOnly();
+        $browser = $this->createBrowser();
 
-            // Extract MQTT token expiry from Connection object
-            $mqttToken = $this->connection->getMqttToken();
-            if (isset($mqttToken['token'])) {
-                $this->mqttTokenExpiresAt = $this->extractJwtExpiry($mqttToken['token']);
-            }
+        // Stage 1: Anonymous Token
+        return $this->stage1_getAnonymousToken($browser)
+            ->then(function(string $anonToken) use ($browser) {
+                $this->anonymousToken = $anonToken;
+                $this->logger->info('Stage 1 completed: Anonymous token acquired');
 
-            // Login token expiry is ~14 years, rarely expires
-            // Could be extracted here if Connection exposes it
+                // Stage 2: Login Token
+                return $this->stage2_login($browser, $anonToken);
+            })
+            ->then(function(string $loginToken) use ($browser) {
+                $this->loginToken = $loginToken;
+                $this->logger->info('Stage 2 completed: Login token acquired');
 
-            return \React\Promise\resolve(null);
-        } catch (\Exception $e) {
-            return \React\Promise\reject($e);
-        }
+                // Stage 3: MQTT Token
+                return $this->stage3_getMqttToken($browser, $this->anonymousToken, $loginToken);
+            })
+            ->then(function(string $mqttToken) {
+                $this->mqttToken = $mqttToken;
+                $this->logger->info('Stage 3 completed: MQTT token acquired', [
+                    'expires_at' => $this->mqttTokenExpiresAt ? date('Y-m-d H:i:s', $this->mqttTokenExpiresAt) : 'unknown'
+                ]);
+            });
     }
 
     private function connectWebSocket(): PromiseInterface
@@ -560,9 +576,10 @@ class AsyncCloudClient extends EventEmitter
         $deferred = new \React\Promise\Deferred();
 
         // Get MQTT credentials
-        $mqttToken = $this->connection->getMqttToken();
-        $username = $mqttToken['username'] ?? '';
-        $password = $mqttToken['password'] ?? '';
+        // Username = MQTT token (from Stage 3)
+        // Password = Fixed constant "helloyou"
+        $username = $this->mqttToken;
+        $password = 'helloyou';
         $clientId = 'fossibot_async_' . uniqid();
 
         // Register message handler on WebSocket stream
@@ -620,23 +637,23 @@ class AsyncCloudClient extends EventEmitter
         return $deferred->promise();
     }
 
+    /**
+     * Discovers devices via async HTTP API call.
+     *
+     * Fetches device list from Fossibot Cloud API.
+     * Requires authentication tokens from authenticate().
+     *
+     * @return PromiseInterface Resolves when devices discovered
+     */
     private function discoverDevices(): PromiseInterface
     {
-        try {
-            // Use Connection's HTTP-based device discovery
-            $this->devices = $this->connection->getDevices();
+        $browser = $this->createBrowser();
 
-            $this->logger->info('Devices discovered via HTTP API', [
-                'count' => count($this->devices)
-            ]);
-
-            return \React\Promise\resolve(null);
-        } catch (\Exception $e) {
-            $this->logger->error('Device discovery failed', [
-                'error' => $e->getMessage()
-            ]);
-            return \React\Promise\reject($e);
-        }
+        return $this->fetchDevices($browser, $this->anonymousToken, $this->loginToken)
+            ->then(function(array $devices) {
+                $this->devices = $devices;
+                return null;
+            });
     }
 
     private function subscribeToDeviceTopics(): PromiseInterface
@@ -857,5 +874,365 @@ class AsyncCloudClient extends EventEmitter
         $payload = json_decode(base64_decode($parts[1]), true);
 
         return $payload['exp'] ?? null;
+    }
+
+    // ========================================================================
+    // Async Authentication Implementation (Stages 1-3)
+    // ========================================================================
+
+    /**
+     * Stage 1: Acquire anonymous token (async).
+     *
+     * @param \React\Http\Browser $browser HTTP client
+     * @return PromiseInterface Resolves with anonymous token string
+     */
+    private function stage1_getAnonymousToken(\React\Http\Browser $browser): PromiseInterface
+    {
+        $this->logger->debug('Stage 1: Requesting anonymous token');
+
+        $requestData = [
+            'method' => 'serverless.auth.user.anonymousAuthorize',
+            'params' => '{}',
+            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'timestamp' => (int)(microtime(true) * 1000),
+        ];
+
+        $signature = $this->generateSignature($requestData);
+
+        return $browser->post(
+            \Fossibot\Config::getApiEndpoint(),
+            [
+                'Content-Type' => 'application/json',
+                'x-serverless-sign' => $signature,
+            ],
+            json_encode($requestData)
+        )->then(
+            function (\Psr\Http\Message\ResponseInterface $response) {
+                $body = (string)$response->getBody();
+                $data = json_decode($body, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new \RuntimeException('Stage 1: JSON decode error - ' . json_last_error_msg());
+                }
+
+                if (!isset($data['data']['accessToken'])) {
+                    throw new \RuntimeException('Stage 1: Missing accessToken in response');
+                }
+
+                $token = $data['data']['accessToken'];
+                $this->logger->debug('Stage 1 completed', [
+                    'token_length' => strlen($token),
+                    'expires_in' => $data['data']['expiresInSecond'] ?? 'unknown',
+                ]);
+
+                return $token;
+            },
+            function (\Exception $e) {
+                $this->logger->error('Stage 1 failed', [
+                    'error' => $e->getMessage(),
+                    'type' => get_class($e),
+                ]);
+                throw new \RuntimeException('Stage 1 (Anonymous Token) failed: ' . $e->getMessage(), 0, $e);
+            }
+        );
+    }
+
+    /**
+     * Stage 2: User login (async).
+     *
+     * @param \React\Http\Browser $browser HTTP client
+     * @param string $anonymousToken Token from Stage 1
+     * @return PromiseInterface Resolves with login token string
+     */
+    private function stage2_login(\React\Http\Browser $browser, string $anonymousToken): PromiseInterface
+    {
+        $this->logger->debug('Stage 2: Logging in', ['email' => $this->email]);
+
+        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+
+        $functionArgs = [
+            '$url' => 'user/pub/login',
+            'data' => [
+                'locale' => 'en',
+                'username' => $this->email,
+                'password' => $this->password,
+            ],
+            'clientInfo' => $deviceInfo->toArray(),
+            'uniIdToken' => $anonymousToken,
+        ];
+
+        $requestData = [
+            'method' => 'serverless.function.runtime.invoke',
+            'params' => json_encode([
+                'functionTarget' => 'router',
+                'functionArgs' => $functionArgs,
+            ]),
+            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'timestamp' => (int)(microtime(true) * 1000),
+            'token' => $anonymousToken,
+        ];
+
+        $signature = $this->generateSignature($requestData);
+
+        return $browser->post(
+            \Fossibot\Config::getApiEndpoint(),
+            [
+                'Content-Type' => 'application/json',
+                'x-serverless-sign' => $signature,
+            ],
+            json_encode($requestData)
+        )->then(
+            function (\Psr\Http\Message\ResponseInterface $response) {
+                $body = (string)$response->getBody();
+                $data = json_decode($body, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new \RuntimeException('Stage 2: JSON decode error - ' . json_last_error_msg());
+                }
+
+                if (!isset($data['data']['token'])) {
+                    throw new \RuntimeException('Stage 2: Missing token in response');
+                }
+
+                $token = $data['data']['token'];
+                $this->logger->debug('Stage 2 completed', [
+                    'token_length' => strlen($token),
+                    'email' => $this->email,
+                ]);
+
+                // Store login token expiry if available
+                if (isset($data['data']['tokenExpired'])) {
+                    $this->loginTokenExpiresAt = (int)($data['data']['tokenExpired'] / 1000);
+                }
+
+                return $token;
+            },
+            function (\Exception $e) {
+                $this->logger->error('Stage 2 failed', [
+                    'error' => $e->getMessage(),
+                    'type' => get_class($e),
+                    'email' => $this->email,
+                ]);
+                throw new \RuntimeException('Stage 2 (Login) failed: ' . $e->getMessage(), 0, $e);
+            }
+        );
+    }
+
+    /**
+     * Stage 3: Acquire MQTT token (async).
+     *
+     * @param \React\Http\Browser $browser HTTP client
+     * @param string $anonymousToken Token from Stage 1
+     * @param string $loginToken Token from Stage 2
+     * @return PromiseInterface Resolves with MQTT token string
+     */
+    private function stage3_getMqttToken(\React\Http\Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
+    {
+        $this->logger->debug('Stage 3: Requesting MQTT token');
+
+        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+
+        $functionArgs = [
+            '$url' => 'common/emqx.getAccessToken',
+            'data' => [
+                'locale' => 'en',
+            ],
+            'clientInfo' => $deviceInfo->toArray(),
+            'uniIdToken' => $loginToken,
+        ];
+
+        $requestData = [
+            'method' => 'serverless.function.runtime.invoke',
+            'params' => json_encode([
+                'functionTarget' => 'router',
+                'functionArgs' => $functionArgs,
+            ]),
+            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'timestamp' => (int)(microtime(true) * 1000),
+            'token' => $anonymousToken,
+        ];
+
+        $signature = $this->generateSignature($requestData);
+
+        return $browser->post(
+            \Fossibot\Config::getApiEndpoint(),
+            [
+                'Content-Type' => 'application/json',
+                'x-serverless-sign' => $signature,
+            ],
+            json_encode($requestData)
+        )->then(
+            function (\Psr\Http\Message\ResponseInterface $response) {
+                $body = (string)$response->getBody();
+                $data = json_decode($body, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new \RuntimeException('Stage 3: JSON decode error - ' . json_last_error_msg());
+                }
+
+                if (!isset($data['data']['access_token'])) {
+                    throw new \RuntimeException('Stage 3: Missing access_token in response');
+                }
+
+                $token = $data['data']['access_token'];
+                $expiry = $this->extractJwtExpiry($token);
+
+                $this->logger->debug('Stage 3 completed', [
+                    'token_length' => strlen($token),
+                    'expires_at' => $expiry ? date('Y-m-d H:i:s', $expiry) : 'unknown',
+                ]);
+
+                // Store MQTT token expiry
+                $this->mqttTokenExpiresAt = $expiry;
+
+                return $token;
+            },
+            function (\Exception $e) {
+                $this->logger->error('Stage 3 failed', [
+                    'error' => $e->getMessage(),
+                    'type' => get_class($e),
+                ]);
+                throw new \RuntimeException('Stage 3 (MQTT Token) failed: ' . $e->getMessage(), 0, $e);
+            }
+        );
+    }
+
+    /**
+     * Fetch device list from API (async).
+     *
+     * @param \React\Http\Browser $browser HTTP client
+     * @param string $anonymousToken Token from Stage 1
+     * @param string $loginToken Token from Stage 2
+     * @return PromiseInterface Resolves with Device[] array
+     */
+    private function fetchDevices(\React\Http\Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
+    {
+        $this->logger->debug('Fetching device list');
+
+        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+
+        $functionArgs = [
+            '$url' => 'device/list',
+            'data' => [
+                'locale' => 'en',
+                'pageSize' => 20,
+                'pageNo' => 1,
+            ],
+            'clientInfo' => $deviceInfo->toArray(),
+            'uniIdToken' => $loginToken,
+        ];
+
+        $requestData = [
+            'method' => 'serverless.function.runtime.invoke',
+            'params' => json_encode([
+                'functionTarget' => 'router',
+                'functionArgs' => $functionArgs,
+            ]),
+            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'timestamp' => (int)(microtime(true) * 1000),
+            'token' => $anonymousToken,
+        ];
+
+        $signature = $this->generateSignature($requestData);
+
+        return $browser->post(
+            \Fossibot\Config::getApiEndpoint(),
+            [
+                'Content-Type' => 'application/json',
+                'x-serverless-sign' => $signature,
+            ],
+            json_encode($requestData)
+        )->then(
+            function (\Psr\Http\Message\ResponseInterface $response) {
+                $body = (string)$response->getBody();
+                $data = json_decode($body, true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new \RuntimeException('Device list: JSON decode error - ' . json_last_error_msg());
+                }
+
+                if (!isset($data['data'])) {
+                    throw new \RuntimeException('Device list: Missing data field in response');
+                }
+
+                $rows = $data['data']['rows'] ?? [];
+                if (empty($rows)) {
+                    $this->logger->warning('No devices found in account');
+                    return [];
+                }
+
+                // Parse devices
+                $devices = [];
+                foreach ($rows as $deviceData) {
+                    try {
+                        $devices[] = \Fossibot\ValueObject\Device::fromApiResponse($deviceData);
+                    } catch (\Exception $e) {
+                        $this->logger->warning('Failed to parse device', [
+                            'error' => $e->getMessage(),
+                            'device_data' => $deviceData,
+                        ]);
+                    }
+                }
+
+                $this->logger->info('Devices discovered via HTTP API', [
+                    'count' => count($devices),
+                ]);
+
+                return $devices;
+            },
+            function (\Exception $e) {
+                $this->logger->error('Device discovery failed', [
+                    'error' => $e->getMessage(),
+                    'type' => get_class($e),
+                ]);
+                throw new \RuntimeException('Device discovery failed: ' . $e->getMessage(), 0, $e);
+            }
+        );
+    }
+
+    // ========================================================================
+    // Helper Methods
+    // ========================================================================
+
+    /**
+     * Creates configured HTTP Browser for async API calls.
+     */
+    private function createBrowser(): \React\Http\Browser
+    {
+        return new \React\Http\Browser($this->loop);
+    }
+
+    /**
+     * Generates HMAC-MD5 signature for API requests.
+     *
+     * @param array $data Request data to sign
+     * @return string HMAC-MD5 signature (hex)
+     */
+    private function generateSignature(array $data): string
+    {
+        // Sort keys alphabetically and filter empty values
+        $items = [];
+        foreach (array_keys($data) as $key) {
+            if (!empty($data[$key])) {
+                $items[] = $key . '=' . $data[$key];
+            }
+        }
+        sort($items);
+
+        $queryString = implode('&', $items);
+
+        return hash_hmac('md5', $queryString, \Fossibot\Config::getClientSecret());
+    }
+
+    /**
+     * Generates unique device ID (32-char hex string).
+     *
+     * Emulates Android device identifier for API compatibility.
+     *
+     * @return string 32-character hexadecimal device ID
+     */
+    private function generateDeviceId(): string
+    {
+        return bin2hex(random_bytes(16));
     }
 }

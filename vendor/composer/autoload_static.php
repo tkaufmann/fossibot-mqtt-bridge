@@ -35,6 +35,7 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
             'React\\Socket\\' => 13,
             'React\\Promise\\Timer\\' => 20,
             'React\\Promise\\' => 14,
+            'React\\Http\\' => 11,
             'React\\EventLoop\\' => 16,
             'React\\Dns\\' => 10,
             'React\\Cache\\' => 12,
@@ -64,6 +65,7 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         'F' => 
         array (
             'Fossibot\\' => 9,
+            'Fig\\Http\\Message\\' => 17,
         ),
         'E' => 
         array (
@@ -108,6 +110,10 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         'React\\Promise\\' => 
         array (
             0 => __DIR__ . '/..' . '/react/promise/src',
+        ),
+        'React\\Http\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/react/http/src',
         ),
         'React\\EventLoop\\' => 
         array (
@@ -177,6 +183,10 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         'Fossibot\\' => 
         array (
             0 => __DIR__ . '/../..' . '/src',
+        ),
+        'Fig\\Http\\Message\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/fig/http-message-util/src',
         ),
         'Evenement\\' => 
         array (
