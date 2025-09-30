@@ -48,6 +48,20 @@ class AsyncCloudClient extends EventEmitter
     private array $pendingSubscriptions = [];
     private array $activeSubscriptions = [];
 
+    // Reconnect state
+    private bool $reconnecting = false;
+    private int $reconnectAttempts = 0;
+    private int $maxReconnectAttempts = 10;
+    private array $backoffDelays = [5, 10, 15, 30, 45, 60]; // seconds
+    private ?\React\EventLoop\TimerInterface $reconnectTimer = null;
+
+    // Token expiry tracking
+    private ?int $mqttTokenExpiresAt = null;
+    private ?int $loginTokenExpiresAt = null;
+
+    // Running state (prevents auto-reconnect during shutdown)
+    private bool $running = true;
+
     public function __construct(
         string $email,
         string $password,
@@ -123,38 +137,50 @@ class AsyncCloudClient extends EventEmitter
     }
 
     /**
-     * Attempt reconnection (called by MqttBridge).
+     * Initiates reconnection with smart tier-based strategy.
      *
-     * @return PromiseInterface Resolves when reconnected
+     * @param bool $forceReauth Force Tier 2 (full re-auth) immediately
+     * @return PromiseInterface
      */
-    public function reconnect(): PromiseInterface
+    public function reconnect(bool $forceReauth = false): PromiseInterface
     {
-        $this->logger->info('AsyncCloudClient attempting reconnect');
-
-        // Disconnect cleanly first
-        if ($this->connected) {
-            $this->disconnect();
+        if ($this->reconnecting) {
+            $this->logger->debug('Reconnection already in progress', [
+                'email' => $this->email
+            ]);
+            return \React\Promise\resolve();
         }
 
-        // Wait 1 second before reconnecting
-        $deferred = new \React\Promise\Deferred();
+        $this->reconnecting = true;
+        $this->reconnectAttempts++;
 
-        $this->loop->addTimer(1.0, function() use ($deferred) {
-            $this->connect()->then(
-                function() use ($deferred) {
-                    $this->logger->info('AsyncCloudClient reconnect successful');
-                    $deferred->resolve(null);
-                },
-                function($error) use ($deferred) {
-                    $this->logger->error('AsyncCloudClient reconnect failed', [
-                        'error' => $error->getMessage()
-                    ]);
-                    $deferred->reject($error);
-                }
+        $this->logger->info('Starting reconnection attempt', [
+            'email' => $this->email,
+            'attempt' => $this->reconnectAttempts,
+            'force_reauth' => $forceReauth
+        ]);
+
+        // Cancel any pending reconnect timer
+        if ($this->reconnectTimer !== null) {
+            $this->loop->cancelTimer($this->reconnectTimer);
+            $this->reconnectTimer = null;
+        }
+
+        // Tier 1: Simple reconnect (unless forceReauth)
+        if (!$forceReauth && $this->hasValidTokens()) {
+            return $this->attemptSimpleReconnect()
+                ->then(
+                    fn() => $this->onReconnectSuccess(),
+                    fn($error) => $this->onReconnectFailure($error, false)
+                );
+        }
+
+        // Tier 2: Full re-authentication
+        return $this->attemptFullReauth()
+            ->then(
+                fn() => $this->onReconnectSuccess(),
+                fn($error) => $this->onReconnectFailure($error, true)
             );
-        });
-
-        return $deferred->promise();
     }
 
     /**
@@ -236,6 +262,182 @@ class AsyncCloudClient extends EventEmitter
     }
 
     // --- Private Methods ---
+
+    /**
+     * Tier 1: Simple reconnect using existing authentication tokens.
+     * Uses the Connection object stored during initial authentication.
+     */
+    private function attemptSimpleReconnect(): PromiseInterface
+    {
+        $this->logger->debug('Attempting Tier 1: Simple reconnect', [
+            'email' => $this->email
+        ]);
+
+        // Close existing WebSocket cleanly (but keep Connection object)
+        if ($this->websocket !== null) {
+            $this->websocket->close();
+            $this->websocket = null;
+        }
+
+        $this->connected = false;
+        $this->mqttBuffer = '';
+
+        // Reconnect with existing tokens from $this->connection
+        return $this->connectWebSocket()
+            ->then(fn() => $this->setupMqtt())
+            ->then(fn() => $this->resubscribeToDevices());
+    }
+
+    /**
+     * Tier 2: Full re-authentication flow (creates new Connection object).
+     */
+    private function attemptFullReauth(): PromiseInterface
+    {
+        $this->logger->debug('Attempting Tier 2: Full re-authentication', [
+            'email' => $this->email
+        ]);
+
+        // Clean slate
+        if ($this->websocket !== null) {
+            $this->websocket->close();
+            $this->websocket = null;
+        }
+
+        $this->connected = false;
+        $this->mqttBuffer = '';
+        $this->connection = null; // Force new Connection object
+        $this->clearAuthTokens();
+
+        // Full authentication flow (same as initial connect())
+        return $this->authenticate()
+            ->then(fn() => $this->connectWebSocket())
+            ->then(fn() => $this->setupMqtt())
+            ->then(fn() => $this->discoverDevices());
+    }
+
+    /**
+     * Reconnection succeeded - reset state.
+     */
+    private function onReconnectSuccess(): void
+    {
+        $this->connected = true;
+        $this->reconnecting = false;
+        $this->reconnectAttempts = 0;
+
+        $this->logger->info('Reconnection successful', [
+            'email' => $this->email
+        ]);
+
+        $this->emit('reconnect');
+    }
+
+    /**
+     * Reconnection failed - schedule Tier 3 retry with exponential backoff.
+     *
+     * @param \Throwable $error The error that caused failure
+     * @param bool $wasReauth Whether this was a Tier 2 (full reauth) attempt
+     */
+    private function onReconnectFailure(\Throwable $error, bool $wasReauth): void
+    {
+        $this->reconnecting = false;
+
+        // Check if we should give up
+        if ($this->reconnectAttempts >= $this->maxReconnectAttempts) {
+            $this->logger->error('Max reconnection attempts reached, giving up', [
+                'email' => $this->email,
+                'attempts' => $this->reconnectAttempts,
+                'error' => $error->getMessage()
+            ]);
+
+            $this->emit('error', [$error]);
+            return;
+        }
+
+        // Determine backoff delay
+        $delayIndex = min($this->reconnectAttempts - 1, count($this->backoffDelays) - 1);
+        $delay = $this->backoffDelays[$delayIndex];
+
+        $this->logger->warning('Reconnection failed, scheduling retry', [
+            'email' => $this->email,
+            'attempt' => $this->reconnectAttempts,
+            'next_retry_in_seconds' => $delay,
+            'was_reauth' => $wasReauth,
+            'error' => $error->getMessage()
+        ]);
+
+        // Tier 3: Schedule retry with exponential backoff
+        $this->reconnectTimer = $this->loop->addTimer($delay, function() use ($wasReauth) {
+            $this->reconnectTimer = null;
+
+            // If simple reconnect failed, try full reauth next time
+            $forceReauth = !$wasReauth;
+
+            $this->reconnect($forceReauth);
+        });
+
+        $this->emit('reconnect_scheduled', [$delay]);
+    }
+
+    /**
+     * Checks if cached authentication tokens are still valid.
+     */
+    private function hasValidTokens(): bool
+    {
+        // If Connection object doesn't exist, tokens are invalid
+        if ($this->connection === null) {
+            return false;
+        }
+
+        $now = time();
+
+        // Check MQTT token expiry (primary concern, ~3 days)
+        if ($this->mqttTokenExpiresAt !== null && $this->mqttTokenExpiresAt <= $now) {
+            $this->logger->debug('MQTT token expired', [
+                'email' => $this->email,
+                'expired_at' => date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
+            ]);
+            return false;
+        }
+
+        // Check login token expiry (~14 years, rarely expires)
+        if ($this->loginTokenExpiresAt !== null && $this->loginTokenExpiresAt <= $now) {
+            $this->logger->debug('Login token expired', [
+                'email' => $this->email,
+                'expired_at' => date('Y-m-d H:i:s', $this->loginTokenExpiresAt)
+            ]);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Clears all cached authentication tokens.
+     */
+    private function clearAuthTokens(): void
+    {
+        $this->mqttTokenExpiresAt = null;
+        $this->loginTokenExpiresAt = null;
+    }
+
+    /**
+     * Re-subscribes to all device topics after reconnection.
+     */
+    private function resubscribeToDevices(): PromiseInterface
+    {
+        $this->logger->debug('Re-subscribing to device topics', [
+            'email' => $this->email,
+            'device_count' => count($this->devices)
+        ]);
+
+        foreach ($this->devices as $device) {
+            $mac = $device->getMqttId();
+            $topic = "$mac/device/response/+";
+            $this->subscribe($topic);
+        }
+
+        return \React\Promise\resolve();
+    }
 
     private function authenticate(): PromiseInterface
     {
