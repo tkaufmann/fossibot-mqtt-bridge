@@ -1,0 +1,33 @@
+[Unit]
+Description=Fossibot MQTT Bridge Daemon
+Documentation=https://github.com/youruser/fossibot-php2
+After=network.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+Type=simple
+User=fossibot
+Group=fossibot
+WorkingDirectory=/opt/fossibot-bridge
+ExecStart=/usr/bin/php /opt/fossibot-bridge/daemon/fossibot-bridge.php --config /etc/fossibot/config.json
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/fossibot
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Environment
+Environment="PHP_MEMORY_LIMIT=256M"
+
+[Install]
+WantedBy=multi-user.target
