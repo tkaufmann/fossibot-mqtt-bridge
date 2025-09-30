@@ -157,7 +157,10 @@ class AsyncCloudClient extends EventEmitter
         $packet = chr(0x82) . $this->encodeLength(strlen($payload)) . $payload;
 
         $this->pendingSubscriptions[$packetId] = $topic;
-        $this->websocket->send($packet);
+
+        // Send as Binary frame (will be automatically masked by WebSocket.php)
+        $frame = new \Ratchet\RFC6455\Messaging\Frame($packet, true, \Ratchet\RFC6455\Messaging\Frame::OP_BINARY);
+        $this->websocket->send($frame);
 
         $this->logger->debug('Subscribed to topic', ['topic' => $topic, 'packet_id' => $packetId]);
     }
@@ -183,7 +186,9 @@ class AsyncCloudClient extends EventEmitter
 
         $packet = chr($flags) . $this->encodeLength(strlen($variableHeader) + strlen($payload)) . $variableHeader . $payload;
 
-        $this->websocket->send($packet);
+        // Send as Binary frame (will be automatically masked by WebSocket.php)
+        $frame = new \Ratchet\RFC6455\Messaging\Frame($packet, true, \Ratchet\RFC6455\Messaging\Frame::OP_BINARY);
+        $this->websocket->send($frame);
 
         $this->logger->debug('Published to topic', [
             'topic' => $topic,
@@ -219,14 +224,25 @@ class AsyncCloudClient extends EventEmitter
 
         // Port 8083 uses unencrypted WebSocket (ws://), not wss://
         $mqttUrl = 'ws://mqtt.sydpower.com:8083/mqtt';
+        $subProtocols = ['mqtt'];
 
-        $this->logger->debug('Connecting WebSocket', ['url' => $mqttUrl]);
+        $this->logger->debug('Connecting WebSocket', [
+            'url' => $mqttUrl,
+            'subprotocols' => $subProtocols
+        ]);
 
-        return $wsConnector($mqttUrl, ['mqtt'])->then(
+        return $wsConnector($mqttUrl, $subProtocols)->then(
             function(WebSocket $conn) {
                 $this->websocket = $conn;
-                $this->logger->debug('WebSocket connected');
+                $this->logger->info('WebSocket connected with MQTT subprotocol');
                 return $conn;
+            },
+            function(\Exception $e) {
+                $this->logger->error('WebSocket connection failed', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                throw $e;
             }
         );
     }
@@ -259,16 +275,34 @@ class AsyncCloudClient extends EventEmitter
 
         // Build and send MQTT CONNECT packet
         $connectPacket = $this->buildConnectPacket($clientId, $username, $password);
-        $this->websocket->send($connectPacket, 'binary');
 
-        $this->logger->debug('Sent MQTT CONNECT packet');
+        $this->logger->debug('MQTT CONNECT packet built', [
+            'packet_length' => strlen($connectPacket),
+            'hex' => bin2hex($connectPacket),
+            'client_id' => $clientId,
+            'username_length' => strlen($username),
+            'password_length' => strlen($password)
+        ]);
+
+        // Create Frame with Binary opcode and send it
+        // WebSocket.php send() will automatically call maskPayload() on the Frame
+        $frame = new \Ratchet\RFC6455\Messaging\Frame(
+            $connectPacket,
+            true, // final frame
+            \Ratchet\RFC6455\Messaging\Frame::OP_BINARY
+        );
+
+        $this->websocket->send($frame);
+
+        $this->logger->debug('Sent MQTT CONNECT packet to WebSocket as Binary frame');
 
         // Wait for CONNACK (handled in handleMqttData)
         // We'll resolve the promise when CONNACK is received
         $this->once('mqtt_connack', function($returnCode) use ($deferred) {
             if ($returnCode === 0) {
+                $this->connected = true; // MQTT is now connected
                 $this->logger->info('MQTT connection accepted');
-                $deferred->resolve();
+                $deferred->resolve(null);
             } else {
                 $error = new \RuntimeException("MQTT connection refused: code $returnCode");
                 $this->logger->error('MQTT connection refused', ['code' => $returnCode]);
@@ -294,7 +328,7 @@ class AsyncCloudClient extends EventEmitter
                 $this->subscribe("$mac/device/response/+");
             }
 
-            return \React\Promise\resolve();
+            return \React\Promise\resolve(null);
         } catch (\Exception $e) {
             return \React\Promise\reject($e);
         }
@@ -414,7 +448,7 @@ class AsyncCloudClient extends EventEmitter
         $protocolName = 'MQTT';
         $protocolLevel = 4; // MQTT 3.1.1
         $connectFlags = 0xC2; // Clean session + username + password
-        $keepAlive = 60;
+        $keepAlive = 30; // Must be 30 seconds per SYSTEM.md
 
         $variableHeader = pack('n', strlen($protocolName)) . $protocolName;
         $variableHeader .= chr($protocolLevel);
