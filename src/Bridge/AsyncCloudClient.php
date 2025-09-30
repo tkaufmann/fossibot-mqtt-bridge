@@ -1196,10 +1196,23 @@ class AsyncCloudClient extends EventEmitter
 
     /**
      * Creates configured HTTP Browser for async API calls.
+     *
+     * Configures DNS resolver and socket connector for reliable HTTP requests.
      */
     private function createBrowser(): \React\Http\Browser
     {
-        return new \React\Http\Browser($this->loop);
+        // Configure DNS resolver to use Google DNS (8.8.8.8)
+        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
+        $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
+
+        // Create socket connector with explicit DNS resolver and timeout
+        $socketConnector = new \React\Socket\Connector([
+            'dns' => $dns,
+            'timeout' => 15.0,
+        ]);
+
+        // Create Browser with configured connector
+        return new \React\Http\Browser($socketConnector, $this->loop);
     }
 
     /**
