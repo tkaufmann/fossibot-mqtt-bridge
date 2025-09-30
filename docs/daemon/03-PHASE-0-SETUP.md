@@ -767,16 +767,16 @@ git commit -m "test: Verify existing components still functional"
 
 ## ✅ Phase 0 Completion Checklist
 
-- [ ] Legacy code deleted (Queue, Facade, Contracts, Parsing) - **Step 0.1**
-- [ ] ReactPHP dependencies installed and tested - **Step 0.2**
-- [ ] Config system created with `example.json` - **Step 0.3**
-- [ ] `.gitignore` updated for `config.json` and `logs/` - **Step 0.3**
-- [ ] Mosquitto installed and running - **Step 0.4**
-- [ ] Bridge directory structure created - **Step 0.5**
-- [ ] Test infrastructure setup (PHPUnit, tests/ directories) - **Step 0.6**
-- [ ] Existing components verified working - **Step 0.7**
-- [ ] All test scripts pass
-- [ ] All commits made with proper messages
+- [x] Legacy code deleted (Queue, Facade, Contracts, Parsing) - **Step 0.1**
+- [x] ReactPHP dependencies installed and tested - **Step 0.2**
+- [x] Config system created with `example.json` - **Step 0.3**
+- [x] `.gitignore` updated for `config.json` and `logs/` - **Step 0.3**
+- [x] Mosquitto installed and running - **Step 0.4**
+- [x] Bridge directory structure created - **Step 0.5**
+- [x] Test infrastructure setup (PHPUnit, tests/ directories) - **Step 0.6**
+- [x] Existing components verified working - **Step 0.7**
+- [x] All test scripts pass
+- [x] All commits made with proper messages
 
 ---
 
