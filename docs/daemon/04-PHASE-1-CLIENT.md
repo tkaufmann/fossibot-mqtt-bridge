@@ -1,19 +1,20 @@
 # 04 - Phase 1: AsyncCloudClient Implementation
 
 **Phase:** 1 - Async Cloud Client
-**Effort:** ~5 hours
+**Effort:** ~4 hours
 **Prerequisites:** Phase 0 complete
-**Deliverables:** Working async MQTT client for Fossibot Cloud with event emitter
+**Deliverables:** Working async MQTT client for Fossibot Cloud with event-based MQTT
 
 ---
 
 ## 🎯 Phase Goals
 
-1. Implement AsyncCloudClient with Pawl WebSocket + php-mqtt/client
+1. Implement AsyncCloudClient with Pawl WebSocket + custom MQTT packet handling
 2. Integrate existing 3-stage authentication (reuse Connection class)
 3. Event emitter for message/connect/disconnect/error
-4. Non-blocking subscribe and publish operations
-5. Test with real Fossibot Cloud API
+4. Event-based (not polling) MQTT protocol implementation
+5. Non-blocking subscribe and publish operations
+6. Test with real Fossibot Cloud API
 
 ---
 
@@ -22,7 +23,11 @@
 ```
 AsyncCloudClient
   ├─ Pawl\Connector (WebSocket)
-  ├─ php-mqtt\Client (MQTT protocol over WebSocket stream)
+  ├─ Custom MQTT Packet Handlers (event-based, no polling)
+  │   ├─ handleMqttData() - Stream event handler
+  │   ├─ processMqttPacket() - Packet parser
+  │   ├─ buildConnectPacket() - CONNECT builder
+  │   └─ subscribe() / publish() - Protocol methods
   ├─ Connection (3-stage auth, reused from existing code)
   └─ EventEmitter (evenement/evenement)
        ├─> 'connect' event
@@ -35,7 +40,7 @@ AsyncCloudClient
 
 ## 📋 Step-by-Step Implementation
 
-### Step 1.1: Basic AsyncCloudClient Structure (60 min)
+### Step 1.1: Basic AsyncCloudClient Structure (90 min)
 
 **File:** `src/Bridge/AsyncCloudClient.php`
 
@@ -47,8 +52,6 @@ namespace Fossibot\Bridge;
 
 use Evenement\EventEmitter;
 use Fossibot\Connection;
-use PhpMqtt\Client\MqttClient;
-use PhpMqtt\Client\ConnectionSettings;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Ratchet\Client\Connector as WebSocketConnector;
@@ -62,6 +65,9 @@ use React\Promise\PromiseInterface;
  * Connects to Fossibot Cloud via MQTT over WebSocket using ReactPHP.
  * Emits events for messages, connection status, and errors.
  * One instance per Fossibot account.
+ *
+ * This client implements event-based MQTT communication without polling,
+ * integrating the WebSocket stream directly with MQTT packet handlers.
  *
  * Events:
  * - 'connect' => function()
@@ -78,11 +84,16 @@ class AsyncCloudClient extends EventEmitter
 
     private ?Connection $connection = null;
     private ?WebSocket $websocket = null;
-    private ?MqttClient $mqttClient = null;
     private bool $connected = false;
 
     private array $devices = [];
     private array $subscriptions = [];
+
+    // MQTT protocol state
+    private string $mqttBuffer = '';
+    private int $mqttPacketId = 1;
+    private array $pendingSubscriptions = [];
+    private array $activeSubscriptions = [];
 
     public function __construct(
         string $email,
@@ -114,7 +125,7 @@ class AsyncCloudClient extends EventEmitter
                 return $this->connectWebSocket();
             })
             ->then(function() {
-                // Phase 3: Setup MQTT over WebSocket
+                // Phase 3: Setup MQTT over WebSocket (event-based)
                 return $this->setupMqtt();
             })
             ->then(function() {
@@ -144,11 +155,10 @@ class AsyncCloudClient extends EventEmitter
 
         $this->connected = false;
 
-        if ($this->mqttClient !== null) {
-            $this->mqttClient->disconnect();
-        }
-
+        // Send MQTT DISCONNECT packet
         if ($this->websocket !== null) {
+            $disconnectPacket = "\xe0\x00"; // DISCONNECT packet
+            $this->websocket->send($disconnectPacket);
             $this->websocket->close();
         }
 
@@ -180,33 +190,53 @@ class AsyncCloudClient extends EventEmitter
      */
     public function subscribe(string $topic): void
     {
-        if (!$this->connected || $this->mqttClient === null) {
+        if (!$this->connected || $this->websocket === null) {
             throw new \RuntimeException('Cannot subscribe: not connected');
         }
 
-        $this->mqttClient->subscribe($topic, function($topic, $payload) {
-            $this->handleMessage($topic, $payload);
-        }, 0);
+        $packetId = $this->getNextPacketId();
 
-        $this->subscriptions[] = $topic;
+        // Build MQTT SUBSCRIBE packet
+        $payload = pack('n', $packetId); // Packet identifier
+        $payload .= pack('n', strlen($topic)) . $topic; // Topic filter
+        $payload .= chr(0); // QoS 0
 
-        $this->logger->debug('Subscribed to topic', ['topic' => $topic]);
+        $packet = chr(0x82) . $this->encodeLength(strlen($payload)) . $payload;
+
+        $this->pendingSubscriptions[$packetId] = $topic;
+        $this->websocket->send($packet);
+
+        $this->logger->debug('Subscribed to topic', ['topic' => $topic, 'packet_id' => $packetId]);
     }
 
     /**
      * Publish to MQTT topic.
      */
-    public function publish(string $topic, string $payload): void
+    public function publish(string $topic, string $payload, int $qos = 1): void
     {
-        if (!$this->connected || $this->mqttClient === null) {
+        if (!$this->connected || $this->websocket === null) {
             throw new \RuntimeException('Cannot publish: not connected');
         }
 
-        $this->mqttClient->publish($topic, $payload, 1);
+        $packetId = $this->getNextPacketId();
+
+        // Build MQTT PUBLISH packet (QoS 1)
+        $flags = 0x30 | ($qos << 1); // PUBLISH with QoS
+        $variableHeader = pack('n', strlen($topic)) . $topic;
+
+        if ($qos > 0) {
+            $variableHeader .= pack('n', $packetId); // Add packet ID for QoS > 0
+        }
+
+        $packet = chr($flags) . $this->encodeLength(strlen($variableHeader) + strlen($payload)) . $variableHeader . $payload;
+
+        $this->websocket->send($packet);
 
         $this->logger->debug('Published to topic', [
             'topic' => $topic,
-            'payload_length' => strlen($payload)
+            'payload_length' => strlen($payload),
+            'packet_id' => $packetId,
+            'qos' => $qos
         ]);
     }
 
@@ -250,34 +280,50 @@ class AsyncCloudClient extends EventEmitter
 
     private function setupMqtt(): PromiseInterface
     {
-        // Create MQTT client over WebSocket stream
+        $deferred = new \React\Promise\Deferred();
+
+        // Get MQTT credentials
         $mqttToken = $this->connection->getMqttToken();
+        $username = $mqttToken['username'] ?? '';
+        $password = $mqttToken['password'] ?? '';
+        $clientId = 'fossibot_async_' . uniqid();
 
-        $this->mqttClient = new MqttClient(
-            'mqtt.sydpower.com',
-            8083,
-            'fossibot_async_' . uniqid(),
-            MqttClient::MQTT_3_1_1
-        );
+        // Register event handlers on WebSocket stream
+        $this->websocket->on('message', function($message) {
+            $this->handleMqttData($message->getPayload());
+        });
 
-        $connectionSettings = (new ConnectionSettings)
-            ->setUsername($mqttToken['username'] ?? '')
-            ->setPassword($mqttToken['password'] ?? '')
-            ->setUseTls(true)
-            ->setConnectTimeout(10);
+        $this->websocket->on('close', function() {
+            $this->logger->warning('WebSocket closed');
+            $this->connected = false;
+            $this->emit('disconnect');
+        });
 
-        try {
-            // Note: php-mqtt/client v2+ has async support
-            // For now, connect is blocking but quick
-            $this->mqttClient->connect($connectionSettings);
+        $this->websocket->on('error', function(\Exception $e) {
+            $this->logger->error('WebSocket error', ['error' => $e->getMessage()]);
+            $this->emit('error', [$e]);
+        });
 
-            // Setup message loop (non-blocking)
-            $this->startMessageLoop();
+        // Build and send MQTT CONNECT packet
+        $connectPacket = $this->buildConnectPacket($clientId, $username, $password);
+        $this->websocket->send($connectPacket);
 
-            return \React\Promise\resolve();
-        } catch (\Exception $e) {
-            return \React\Promise\reject($e);
-        }
+        $this->logger->debug('Sent MQTT CONNECT packet');
+
+        // Wait for CONNACK (handled in handleMqttData)
+        // We'll resolve the promise when CONNACK is received
+        $this->once('mqtt_connack', function($returnCode) use ($deferred) {
+            if ($returnCode === 0) {
+                $this->logger->info('MQTT connection accepted');
+                $deferred->resolve();
+            } else {
+                $error = new \RuntimeException("MQTT connection refused: code $returnCode");
+                $this->logger->error('MQTT connection refused', ['code' => $returnCode]);
+                $deferred->reject($error);
+            }
+        });
+
+        return $deferred->promise();
     }
 
     private function discoverDevices(): PromiseInterface
@@ -301,28 +347,106 @@ class AsyncCloudClient extends EventEmitter
         }
     }
 
-    private function startMessageLoop(): void
+    /**
+     * Handle incoming MQTT data from WebSocket (event-driven).
+     */
+    private function handleMqttData(string $data): void
     {
-        // Poll for messages every 100ms (non-blocking)
-        $this->loop->addPeriodicTimer(0.1, function() {
-            if ($this->mqttClient === null || !$this->connected) {
+        $this->mqttBuffer .= $data;
+
+        while (strlen($this->mqttBuffer) > 0) {
+            // Parse MQTT packet type
+            $byte = ord($this->mqttBuffer[0]);
+            $packetType = ($byte >> 4) & 0x0F;
+
+            // Decode remaining length
+            $lengthData = $this->decodeLength(substr($this->mqttBuffer, 1));
+            if ($lengthData === null) {
+                // Not enough data yet, wait for more
                 return;
             }
 
-            try {
-                // Process pending messages (non-blocking)
-                $this->mqttClient->loop(true, true);
-            } catch (\Exception $e) {
-                $this->logger->error('MQTT loop error', [
-                    'error' => $e->getMessage()
-                ]);
-                $this->emit('error', [$e]);
+            [$remainingLength, $lengthBytes] = $lengthData;
+            $totalPacketLength = 1 + $lengthBytes + $remainingLength;
+
+            if (strlen($this->mqttBuffer) < $totalPacketLength) {
+                // Packet incomplete, wait for more data
+                return;
             }
-        });
+
+            // Extract complete packet
+            $packet = substr($this->mqttBuffer, 0, $totalPacketLength);
+            $this->mqttBuffer = substr($this->mqttBuffer, $totalPacketLength);
+
+            // Process packet
+            $this->processMqttPacket($packetType, $packet);
+        }
     }
 
-    private function handleMessage(string $topic, string $payload): void
+    private function processMqttPacket(int $packetType, string $packet): void
     {
+        switch ($packetType) {
+            case 2: // CONNACK
+                $returnCode = ord($packet[3]);
+                $this->emit('mqtt_connack', [$returnCode]);
+                break;
+
+            case 3: // PUBLISH
+                $this->handlePublishPacket($packet);
+                break;
+
+            case 4: // PUBACK
+                $packetId = unpack('n', substr($packet, 2, 2))[1];
+                $this->logger->debug('Received PUBACK', ['packet_id' => $packetId]);
+                break;
+
+            case 9: // SUBACK
+                $packetId = unpack('n', substr($packet, 2, 2))[1];
+                if (isset($this->pendingSubscriptions[$packetId])) {
+                    $topic = $this->pendingSubscriptions[$packetId];
+                    $this->activeSubscriptions[] = $topic;
+                    unset($this->pendingSubscriptions[$packetId]);
+                    $this->logger->debug('Subscription confirmed', ['topic' => $topic]);
+                }
+                break;
+
+            case 13: // PINGRESP
+                $this->logger->debug('Received PINGRESP');
+                break;
+
+            default:
+                $this->logger->warning('Unknown MQTT packet type', ['type' => $packetType]);
+        }
+    }
+
+    private function handlePublishPacket(string $packet): void
+    {
+        $pos = 1;
+
+        // Skip remaining length
+        while (ord($packet[$pos]) & 0x80) {
+            $pos++;
+        }
+        $pos++;
+
+        // Extract topic
+        $topicLength = unpack('n', substr($packet, $pos, 2))[1];
+        $pos += 2;
+        $topic = substr($packet, $pos, $topicLength);
+        $pos += $topicLength;
+
+        // Extract QoS from flags
+        $flags = ord($packet[0]);
+        $qos = ($flags >> 1) & 0x03;
+
+        // Skip packet ID if QoS > 0
+        if ($qos > 0) {
+            $pos += 2;
+        }
+
+        // Extract payload
+        $payload = substr($packet, $pos);
+
         $this->logger->debug('Message received', [
             'topic' => $topic,
             'payload_length' => strlen($payload)
@@ -330,16 +454,96 @@ class AsyncCloudClient extends EventEmitter
 
         $this->emit('message', [$topic, $payload]);
     }
+
+    private function buildConnectPacket(string $clientId, string $username, string $password): string
+    {
+        // MQTT 3.1.1 CONNECT packet
+        $protocolName = 'MQTT';
+        $protocolLevel = 4; // MQTT 3.1.1
+        $connectFlags = 0xC2; // Clean session + username + password
+        $keepAlive = 60;
+
+        $variableHeader = pack('n', strlen($protocolName)) . $protocolName;
+        $variableHeader .= chr($protocolLevel);
+        $variableHeader .= chr($connectFlags);
+        $variableHeader .= pack('n', $keepAlive);
+
+        $payload = pack('n', strlen($clientId)) . $clientId;
+        $payload .= pack('n', strlen($username)) . $username;
+        $payload .= pack('n', strlen($password)) . $password;
+
+        $remainingLength = strlen($variableHeader) + strlen($payload);
+
+        return chr(0x10) . $this->encodeLength($remainingLength) . $variableHeader . $payload;
+    }
+
+    private function encodeLength(int $length): string
+    {
+        $encoded = '';
+        do {
+            $byte = $length % 128;
+            $length = (int)($length / 128);
+            if ($length > 0) {
+                $byte |= 0x80;
+            }
+            $encoded .= chr($byte);
+        } while ($length > 0);
+
+        return $encoded;
+    }
+
+    private function decodeLength(string $data): ?array
+    {
+        $multiplier = 1;
+        $value = 0;
+        $index = 0;
+
+        do {
+            if (!isset($data[$index])) {
+                return null; // Not enough data
+            }
+
+            $byte = ord($data[$index]);
+            $value += ($byte & 0x7F) * $multiplier;
+            $multiplier *= 128;
+            $index++;
+
+            if ($multiplier > 128 * 128 * 128) {
+                throw new \RuntimeException('Malformed remaining length');
+            }
+        } while (($byte & 0x80) !== 0);
+
+        return [$value, $index];
+    }
+
+    private function getNextPacketId(): int
+    {
+        $id = $this->mqttPacketId++;
+        if ($this->mqttPacketId > 65535) {
+            $this->mqttPacketId = 1;
+        }
+        return $id;
+    }
 }
 ```
+
+**Important Notes:**
+
+1. **No External Dependencies**: This implementation uses NO external MQTT library. All MQTT packet handling is custom-built for ReactPHP integration.
+
+2. **Event-Based Design**: The client reacts to WebSocket `message` events - no polling, no periodic timers.
+
+3. **MQTT Keep-Alive**: The CONNECT packet sets `keepAlive = 60` seconds. To properly maintain the connection, add PINGREQ handling in Phase 2 (MqttBridge will handle this).
+
+4. **Buffer Management**: `mqttBuffer` handles fragmented WebSocket frames - MQTT packets can arrive split across multiple WebSocket messages.
 
 **Commit:**
 ```bash
 git add src/Bridge/AsyncCloudClient.php
-git commit -m "feat(bridge): Implement AsyncCloudClient base structure"
+git commit -m "feat(bridge): Implement event-based AsyncCloudClient with custom MQTT"
 ```
 
-**Deliverable:** ✅ AsyncCloudClient skeleton complete
+**Deliverable:** ✅ AsyncCloudClient with event-based MQTT complete
 
 ---
 
@@ -375,7 +579,7 @@ $loop = Loop::get();
 $client = new AsyncCloudClient($email, $password, $loop, $logger);
 
 // Register event handlers
-$client->on('connect', function() {
+$client->on('connect', function() use ($client) {
     echo "\n✅ EVENT: Connected!\n";
     echo "Devices discovered: " . count($client->getDevices()) . "\n";
 
@@ -604,59 +808,7 @@ git commit -m "test: Add AsyncCloudClient publish command test"
 
 ---
 
-### Step 1.4: Refine MQTT Client Integration (45 min)
-
-**Issue:** `php-mqtt/client` may not fully support async streams yet
-
-**Solution:** Use adapter pattern to wrap synchronous MQTT calls
-
-**Update:** `src/Bridge/AsyncCloudClient.php`
-
-Add method to handle async MQTT:
-
-```php
-private function setupMqtt(): PromiseInterface
-{
-    $mqttToken = $this->connection->getMqttToken();
-
-    // Create MQTT client (note: will use WebSocket stream)
-    $this->mqttClient = new MqttClient(
-        'mqtt.sydpower.com',
-        8083,
-        'fossibot_async_' . uniqid(),
-        MqttClient::MQTT_3_1_1,
-        $this->websocket->getStream() // Pass WebSocket stream
-    );
-
-    $connectionSettings = (new ConnectionSettings)
-        ->setUsername($mqttToken['username'] ?? '')
-        ->setPassword($mqttToken['password'] ?? '')
-        ->setKeepAliveInterval(60)
-        ->setUseTls(false); // TLS already handled by WebSocket
-
-    try {
-        $this->mqttClient->connect($connectionSettings, true);
-        $this->startMessageLoop();
-        return \React\Promise\resolve();
-    } catch (\Exception $e) {
-        return \React\Promise\reject($e);
-    }
-}
-```
-
-**Note:** If `php-mqtt/client` doesn't support custom streams, we may need to implement basic MQTT packet handling manually or use alternative library. Test and adapt as needed.
-
-**Commit:**
-```bash
-git add src/Bridge/AsyncCloudClient.php
-git commit -m "refactor(bridge): Refine MQTT client WebSocket integration"
-```
-
-**Deliverable:** ✅ MQTT integration refined
-
----
-
-### Step 1.5: Add Reconnect Handler Stub (30 min)
+### Step 1.4: Add Reconnect Handler (30 min)
 
 **Update:** `src/Bridge/AsyncCloudClient.php`
 
@@ -773,14 +925,15 @@ git commit -m "feat(bridge): Add reconnect capability to AsyncCloudClient"
 
 ## ✅ Phase 1 Completion Checklist
 
-- [ ] AsyncCloudClient class implemented
+- [ ] AsyncCloudClient class implemented (Step 1.1)
+- [ ] Event-based MQTT packet handling (no polling)
+- [ ] Custom MQTT protocol implementation (CONNECT, PUBLISH, SUBSCRIBE, CONNACK, SUBACK, PUBACK)
 - [ ] EventEmitter integration working (connect, message, disconnect, error)
 - [ ] 3-stage auth integration (reuses Connection class)
 - [ ] WebSocket connection via Pawl
-- [ ] MQTT protocol via php-mqtt/client
-- [ ] Subscribe functionality tested
-- [ ] Publish functionality tested
-- [ ] Reconnect capability implemented
+- [ ] Subscribe functionality tested (Step 1.2)
+- [ ] Publish functionality tested (Step 1.3)
+- [ ] Reconnect capability implemented (Step 1.4)
 - [ ] All test scripts pass against real Fossibot Cloud
 - [ ] Code committed with clear messages
 
@@ -793,8 +946,9 @@ git commit -m "feat(bridge): Add reconnect capability to AsyncCloudClient"
 1. `test_async_cloud_client.php` connects and receives messages
 2. `test_async_publish.php` successfully sends commands (device responds)
 3. Event emitter fires all events correctly
-4. No memory leaks during 30+ second runs
-5. Code is clean and well-documented
+4. No polling - pure event-based MQTT communication
+5. No memory leaks during 30+ second runs
+6. Code is clean and well-documented
 
 ---
 
@@ -809,7 +963,7 @@ curl -I https://mqtt.sydpower.com
 
 ---
 
-**Problem:** MQTT authentication fails
+**Problem:** MQTT authentication fails (CONNACK return code != 0)
 
 **Solution:** Check token expiry in Connection class. Re-authenticate if needed.
 
@@ -817,7 +971,19 @@ curl -I https://mqtt.sydpower.com
 
 **Problem:** Messages not received
 
-**Solution:** Verify subscriptions are active. Check MQTT client loop is running.
+**Solution:**
+1. Check WebSocket event handlers are registered (`$websocket->on('message', ...)`)
+2. Verify subscriptions received SUBACK confirmation (check logs)
+3. Enable DEBUG logging to see MQTT packet types
+
+---
+
+**Problem:** High CPU usage
+
+**Solution:** This should NOT happen with event-based design. If it does:
+1. Check for accidental polling loops
+2. Verify `handleMqttData()` is only called on WebSocket events
+3. No `addPeriodicTimer()` should exist in AsyncCloudClient
 
 ---
 
