@@ -489,7 +489,14 @@ class AsyncCloudClient extends EventEmitter
             'subprotocols' => $subProtocols
         ]);
 
-        return $wsConnector($mqttUrl, $subProtocols)->then(
+        // Add timeout to detect hanging promises
+        // websocat --protocol mqtt works, so if this times out,
+        // it's a Ratchet/Pawl integration issue
+        return \React\Promise\Timer\timeout(
+            $wsConnector($mqttUrl, $subProtocols),
+            10.0,
+            $this->loop
+        )->then(
             function(WebSocket $conn) {
                 $this->websocket = $conn;
                 $this->logger->info('WebSocket connected with MQTT subprotocol');
@@ -521,10 +528,18 @@ class AsyncCloudClient extends EventEmitter
                 return $conn;
             },
             function(\Exception $e) {
+                // Check if this is a timeout error
+                $isTimeout = $e instanceof \React\Promise\Timer\TimeoutException;
+
                 $this->logger->error('WebSocket connection failed', [
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
+                    'type' => get_class($e),
+                    'is_timeout' => $isTimeout,
+                    'note' => $isTimeout
+                        ? 'Promise never resolved. websocat works, so this is likely a Ratchet/Pawl bug or integration issue.'
+                        : 'Connection rejected by server'
                 ]);
+
                 throw $e;
             }
         );
