@@ -3,6 +3,14 @@ declare(strict_types=1);
 
 namespace Fossibot\Bridge;
 
+use Fossibot\Device\DeviceStateManager;
+use PhpMqtt\Client\MqttClient;
+use PhpMqtt\Client\ConnectionSettings;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
+use React\EventLoop\Loop;
+use React\EventLoop\LoopInterface;
+
 /**
  * MQTT Bridge orchestrator with ReactPHP event loop.
  *
@@ -12,5 +20,376 @@ namespace Fossibot\Bridge;
  */
 class MqttBridge
 {
-    // TODO: Implementation in Phase 2
+    private LoopInterface $loop;
+    private array $config;
+    private LoggerInterface $logger;
+
+    /** @var AsyncCloudClient[] Indexed by account email */
+    private array $cloudClients = [];
+
+    private ?MqttClient $brokerClient = null;
+    private DeviceStateManager $stateManager;
+    private TopicTranslator $topicTranslator;
+    private PayloadTransformer $payloadTransformer;
+
+    private bool $running = false;
+    private int $startTime = 0;
+
+    public function __construct(
+        array $config,
+        ?LoggerInterface $logger = null
+    ) {
+        $this->config = $config;
+        $this->logger = $logger ?? new NullLogger();
+        $this->loop = Loop::get();
+
+        // Initialize utilities
+        $this->stateManager = new DeviceStateManager();
+        $this->topicTranslator = new TopicTranslator();
+        $this->payloadTransformer = new PayloadTransformer();
+    }
+
+    /**
+     * Start bridge (blocking - runs event loop).
+     */
+    public function run(): void
+    {
+        $this->logger->info('MqttBridge starting...');
+        $this->startTime = time();
+
+        // Setup signal handlers
+        $this->setupSignalHandlers();
+
+        // Initialize accounts
+        $this->initializeAccounts();
+
+        // Connect to local broker
+        $this->connectBroker();
+
+        // Publish initial bridge status
+        $this->publishBridgeStatus();
+
+        // Setup broker message loop (process incoming commands from broker)
+        $this->loop->addPeriodicTimer(0.1, function() {
+            if ($this->brokerClient !== null) {
+                try {
+                    // Process pending messages from local broker (non-blocking)
+                    $this->brokerClient->loop(true);
+                } catch (\Exception $e) {
+                    $this->logger->error('Broker message loop error', [
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+        });
+
+        // Setup status publish timer (every 60s)
+        $this->loop->addPeriodicTimer(
+            $this->config['bridge']['status_publish_interval'] ?? 60,
+            fn() => $this->publishBridgeStatus()
+        );
+
+        $this->running = true;
+        $this->logger->info('MqttBridge ready, entering event loop');
+
+        // Run event loop (blocks here)
+        $this->loop->run();
+
+        $this->logger->info('MqttBridge stopped');
+    }
+
+    /**
+     * Shutdown bridge gracefully.
+     */
+    public function shutdown(): void
+    {
+        $this->logger->info('MqttBridge shutting down...');
+        $this->running = false;
+
+        // Disconnect all cloud clients
+        foreach ($this->cloudClients as $email => $client) {
+            $this->logger->info('Disconnecting cloud client', ['email' => $email]);
+            $client->disconnect();
+        }
+
+        // Publish offline status
+        $this->publishBridgeStatus('offline');
+
+        // Disconnect broker
+        if ($this->brokerClient !== null) {
+            $this->brokerClient->disconnect();
+        }
+
+        // Stop event loop
+        $this->loop->stop();
+    }
+
+    // --- Private Methods ---
+
+    private function setupSignalHandlers(): void
+    {
+        // SIGTERM (systemd stop)
+        pcntl_signal(SIGTERM, function() {
+            $this->logger->info('Received SIGTERM');
+            $this->shutdown();
+        });
+
+        // SIGINT (Ctrl+C)
+        pcntl_signal(SIGINT, function() {
+            $this->logger->info('Received SIGINT');
+            $this->shutdown();
+        });
+
+        // Dispatch signals in event loop
+        $this->loop->addPeriodicTimer(1, function() {
+            pcntl_signal_dispatch();
+        });
+    }
+
+    private function initializeAccounts(): void
+    {
+        foreach ($this->config['accounts'] as $account) {
+            if (isset($account['enabled']) && $account['enabled'] === false) {
+                $this->logger->info('Account disabled, skipping', ['email' => $account['email']]);
+                continue;
+            }
+
+            $email = $account['email'];
+            $password = $account['password'];
+
+            $this->logger->info('Initializing account', ['email' => $email]);
+
+            $client = new AsyncCloudClient($email, $password, $this->loop, $this->logger);
+
+            // Register event handlers
+            $this->registerCloudClientEvents($client, $email);
+
+            $this->cloudClients[$email] = $client;
+
+            // Connect (async)
+            $client->connect()->then(
+                function() use ($email) {
+                    $this->logger->info('Account connected', ['email' => $email]);
+                },
+                function($error) use ($email) {
+                    $this->logger->error('Account connection failed', [
+                        'email' => $email,
+                        'error' => $error->getMessage()
+                    ]);
+                }
+            );
+        }
+
+        $this->logger->info('Initialized accounts', ['count' => count($this->cloudClients)]);
+    }
+
+    private function registerCloudClientEvents(AsyncCloudClient $client, string $email): void
+    {
+        $client->on('connect', function() use ($email, $client) {
+            $this->logger->info('Cloud client connected', ['email' => $email]);
+
+            // Publish availability for all devices
+            foreach ($client->getDevices() as $device) {
+                $this->publishAvailability($device->getMqttId(), 'online');
+            }
+        });
+
+        $client->on('message', function($topic, $payload) use ($email) {
+            $this->handleCloudMessage($email, $topic, $payload);
+        });
+
+        $client->on('disconnect', function() use ($email) {
+            $this->logger->warning('Cloud client disconnected', ['email' => $email]);
+            // TODO: Reconnect logic in Phase 3
+        });
+
+        $client->on('error', function($error) use ($email) {
+            $this->logger->error('Cloud client error', [
+                'email' => $email,
+                'error' => $error->getMessage()
+            ]);
+        });
+    }
+
+    private function connectBroker(): void
+    {
+        $host = $this->config['mosquitto']['host'];
+        $port = $this->config['mosquitto']['port'];
+        $clientId = $this->config['mosquitto']['client_id'] ?? 'fossibot_bridge';
+
+        $this->logger->info('Connecting to local broker', [
+            'host' => $host,
+            'port' => $port
+        ]);
+
+        $this->brokerClient = new MqttClient($host, $port, $clientId);
+
+        $settings = (new ConnectionSettings)
+            ->setKeepAliveInterval(60)
+            ->setUseTls(false);
+
+        if (!empty($this->config['mosquitto']['username'])) {
+            $settings->setUsername($this->config['mosquitto']['username']);
+            $settings->setPassword($this->config['mosquitto']['password']);
+        }
+
+        $this->brokerClient->connect($settings, true);
+
+        // Subscribe to command topics
+        $this->brokerClient->subscribe('fossibot/+/command', function($topic, $payload) {
+            $this->handleBrokerCommand($topic, $payload);
+        }, 1);
+
+        $this->logger->info('Connected to local broker');
+    }
+
+    private function handleCloudMessage(string $accountEmail, string $topic, string $payload): void
+    {
+        try {
+            // Extract MAC
+            $mac = $this->topicTranslator->extractMacFromCloudTopic($topic);
+            if ($mac === null) {
+                return;
+            }
+
+            // Parse Modbus
+            $registers = $this->payloadTransformer->parseModbusPayload($payload);
+            if (empty($registers)) {
+                return;
+            }
+
+            // Update state
+            $this->stateManager->updateDeviceState($mac, $registers);
+
+            // Get state and convert to JSON
+            $state = $this->stateManager->getDeviceState($mac);
+            $json = $this->payloadTransformer->stateToJson($state);
+
+            // Publish to broker
+            $brokerTopic = $this->topicTranslator->cloudToBroker($topic);
+            $this->brokerClient->publish($brokerTopic, $json, 1, true);
+
+            $this->logger->debug('State published', [
+                'mac' => $mac,
+                'soc' => $state->soc
+            ]);
+
+        } catch (\Exception $e) {
+            $this->logger->error('Error handling cloud message', [
+                'topic' => $topic,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function handleBrokerCommand(string $topic, string $payload): void
+    {
+        try {
+            // Extract MAC
+            $mac = $this->topicTranslator->extractMacFromBrokerTopic($topic);
+            if ($mac === null) {
+                return;
+            }
+
+            // Parse JSON command
+            $command = $this->payloadTransformer->jsonToCommand($payload);
+
+            // Convert to Modbus
+            $modbusPayload = $this->payloadTransformer->commandToModbus($command);
+
+            // Find client responsible for this device
+            $client = $this->findClientForDevice($mac);
+            if ($client === null) {
+                $this->logger->warning('No client found for device', ['mac' => $mac]);
+                return;
+            }
+
+            // Publish to cloud
+            $cloudTopic = $this->topicTranslator->brokerToCloud($topic);
+            $client->publish($cloudTopic, $modbusPayload);
+
+            $this->logger->info('Command forwarded to cloud', [
+                'mac' => $mac,
+                'command' => $command->getDescription()
+            ]);
+
+        } catch (\Exception $e) {
+            $this->logger->error('Error handling broker command', [
+                'topic' => $topic,
+                'payload' => $payload,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function findClientForDevice(string $mac): ?AsyncCloudClient
+    {
+        foreach ($this->cloudClients as $client) {
+            foreach ($client->getDevices() as $device) {
+                if ($device->getMqttId() === $mac) {
+                    return $client;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function publishAvailability(string $mac, string $status): void
+    {
+        $topic = "fossibot/$mac/availability";
+        $this->brokerClient->publish($topic, $status, 1, true);
+
+        $this->logger->debug('Published availability', [
+            'mac' => $mac,
+            'status' => $status
+        ]);
+    }
+
+    private function publishBridgeStatus(string $status = 'online'): void
+    {
+        $devices = [];
+
+        foreach ($this->cloudClients as $client) {
+            foreach ($client->getDevices() as $device) {
+                $devices[] = [
+                    'id' => $device->getMqttId(),
+                    'name' => $device->getDeviceName(),
+                    'model' => $device->getModel(),
+                    'cloudConnected' => $client->isConnected(),
+                    'lastSeen' => date('c')
+                ];
+            }
+        }
+
+        $statusMessage = [
+            'status' => $status,
+            'version' => '2.0.0',
+            'uptime_seconds' => time() - $this->startTime,
+            'accounts' => array_map(fn($email) => [
+                'email' => $this->maskEmail($email),
+                'connected' => $this->cloudClients[$email]->isConnected(),
+                'device_count' => count($this->cloudClients[$email]->getDevices())
+            ], array_keys($this->cloudClients)),
+            'devices' => $devices,
+            'timestamp' => date('c')
+        ];
+
+        $json = json_encode($statusMessage, JSON_THROW_ON_ERROR);
+        $this->brokerClient->publish('fossibot/bridge/status', $json, 1, true);
+
+        $this->logger->debug('Published bridge status');
+    }
+
+    private function maskEmail(string $email): string
+    {
+        [$local, $domain] = explode('@', $email);
+
+        if (strlen($local) <= 2) {
+            return $email; // Too short to mask meaningfully
+        }
+
+        $masked = $local[0] . '***' . $local[strlen($local) - 1];
+        return "$masked@$domain";
+    }
 }
