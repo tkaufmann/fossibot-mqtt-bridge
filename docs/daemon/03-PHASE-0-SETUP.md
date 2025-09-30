@@ -9,17 +9,74 @@
 
 ## 🎯 Phase Goals
 
-1. Install ReactPHP ecosystem dependencies
-2. Setup config system for multi-account
-3. Install and verify Mosquitto broker
-4. Remove legacy synchronous code
+1. Remove legacy synchronous code (clean slate)
+2. Install ReactPHP ecosystem dependencies
+3. Setup config system for multi-account
+4. Install and verify Mosquitto broker
 5. Create bridge component structure
 
 ---
 
 ## 📋 Step-by-Step Implementation
 
-### Step 0.1: Install ReactPHP Dependencies (30 min)
+### Step 0.1: Remove Legacy Code (30 min)
+
+**⚠️ DO THIS FIRST** to avoid conflicts with test scripts created in later steps.
+
+**Files to delete:**
+```bash
+# Remove legacy directories
+rm -rf src/Queue/
+rm -rf src/Contracts/
+rm -rf src/Parsing/
+
+# Remove legacy classes
+rm src/Device/DeviceFacade.php
+
+# Check for old test scripts
+ls test_*.php 2>/dev/null
+# If old test scripts exist, delete them EXPLICITLY by name:
+# rm test_old_connection.php test_old_queue.php ...
+```
+
+**Verify removal:**
+```bash
+git status
+```
+
+**Expected:**
+```
+deleted: src/Queue/QueueManager.php
+deleted: src/Queue/ConnectionQueue.php
+deleted: src/Contracts/CommandExecutor.php
+deleted: src/Contracts/ResponseListener.php
+deleted: src/Device/DeviceFacade.php
+deleted: src/Parsing/ModbusResponseParser.php
+```
+
+**Update composer autoload:**
+```bash
+composer dump-autoload
+```
+
+**Verify no syntax errors:**
+```bash
+php -l src/Connection.php
+php -l src/Device/Device.php
+php -l src/Device/DeviceState.php
+```
+
+**Commit:**
+```bash
+git add -A
+git commit -m "refactor: Remove legacy queue, facade, and parser components"
+```
+
+**Deliverable:** ✅ Legacy code removed, codebase clean
+
+---
+
+### Step 0.2: Install ReactPHP Dependencies (30 min)
 
 **Add dependencies to composer.json:**
 
@@ -86,7 +143,7 @@ git commit -m "feat(deps): Add ReactPHP ecosystem dependencies"
 
 ---
 
-### Step 0.2: Create Config System (45 min)
+### Step 0.3: Create Config System (45 min)
 
 **Create directory structure:**
 ```bash
@@ -280,7 +337,7 @@ git commit -m "feat(config): Add JSON config system with multi-account support"
 
 ---
 
-### Step 0.3: Install and Test Mosquitto (20 min)
+### Step 0.4: Install and Test Mosquitto (20 min)
 
 **macOS:**
 ```bash
@@ -373,69 +430,6 @@ git commit -m "test: Add Mosquitto connection test"
 ```
 
 **Deliverable:** ✅ Mosquitto running and accessible
-
----
-
-### Step 0.4: Remove Legacy Code (30 min)
-
-**Files to delete:**
-```bash
-# Remove legacy directories
-rm -rf src/Queue/
-rm -rf src/Contracts/
-rm -rf src/Parsing/
-
-# Remove legacy classes
-rm src/Device/DeviceFacade.php
-
-# Check for old test scripts (BEFORE running Phase 0 test scripts)
-ls test_*.php 2>/dev/null
-# If old test scripts exist, delete them EXPLICITLY by name to avoid
-# accidentally deleting Phase 0 test scripts:
-# rm test_old_connection.php test_old_queue.php ...
-#
-# ⚠️ DO NOT use "rm test_*.php" after creating Phase 0 test scripts!
-```
-
-**Verify removal:**
-```bash
-git status
-```
-
-**Expected:**
-```
-deleted: src/Queue/QueueManager.php
-deleted: src/Queue/ConnectionQueue.php
-deleted: src/Contracts/CommandExecutor.php
-deleted: src/Contracts/ResponseListener.php
-deleted: src/Device/DeviceFacade.php
-deleted: src/Parsing/ModbusResponseParser.php
-```
-
-**⚠️ Important Timing:**
-- Execute this cleanup step **BEFORE** creating test scripts in Steps 0.1-0.3
-- OR explicitly list old test scripts by name if cleaning up later
-- Never use wildcards (`test_*.php`) after Phase 0 test scripts exist
-
-**Update composer autoload:**
-```bash
-composer dump-autoload
-```
-
-**Verify no errors:**
-```bash
-php -l src/Connection.php
-php -l src/Device/Device.php
-php -l src/Device/DeviceState.php
-```
-
-**Commit:**
-```bash
-git add -A
-git commit -m "refactor: Remove legacy queue, facade, and parser components"
-```
-
-**Deliverable:** ✅ Legacy code removed, codebase clean
 
 ---
 
@@ -663,13 +657,13 @@ git commit -m "test: Verify existing components still functional"
 
 ## ✅ Phase 0 Completion Checklist
 
-- [ ] ReactPHP dependencies installed and tested
-- [ ] Config system created with `example.json`
-- [ ] `.gitignore` updated for `config.json` and `logs/`
-- [ ] Mosquitto installed and running
-- [ ] Legacy code deleted (Queue, Facade, Contracts, Parsing)
-- [ ] Bridge directory structure created
-- [ ] Existing components verified working
+- [ ] Legacy code deleted (Queue, Facade, Contracts, Parsing) - **Step 0.1**
+- [ ] ReactPHP dependencies installed and tested - **Step 0.2**
+- [ ] Config system created with `example.json` - **Step 0.3**
+- [ ] `.gitignore` updated for `config.json` and `logs/` - **Step 0.3**
+- [ ] Mosquitto installed and running - **Step 0.4**
+- [ ] Bridge directory structure created - **Step 0.5**
+- [ ] Existing components verified working - **Step 0.6**
 - [ ] All test scripts pass
 - [ ] All commits made with proper messages
 
@@ -679,12 +673,12 @@ git commit -m "test: Verify existing components still functional"
 
 **Phase 0 is complete when:**
 
-1. `composer install` runs without errors
-2. `test_react_installation.php` passes
-3. `test_config_load.php` passes
-4. `test_mosquitto.php` passes
-5. `test_existing_components.php` passes
-6. No legacy code remains in repository
+1. No legacy code remains in repository
+2. `composer install` runs without errors
+3. `test_react_installation.php` passes
+4. `test_config_load.php` passes
+5. `test_mosquitto.php` passes
+6. `test_existing_components.php` passes
 7. `src/Bridge/` directory exists with placeholder files
 8. Git history is clean with descriptive commits
 
