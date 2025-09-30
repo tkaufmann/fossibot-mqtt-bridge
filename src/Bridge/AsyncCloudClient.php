@@ -475,7 +475,16 @@ class AsyncCloudClient extends EventEmitter
 
     private function connectWebSocket(): PromiseInterface
     {
-        $wsConnector = new WebSocketConnector($this->loop);
+        // Configure DNS resolver to use Google DNS (8.8.8.8)
+        // This prevents ReactPHP DNS timeout issues
+        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
+        $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
+
+        // Create socket connector with explicit DNS resolver
+        $socketConnector = new \React\Socket\Connector(['dns' => $dns]);
+
+        // Create WebSocket connector with configured socket connector
+        $wsConnector = new WebSocketConnector($this->loop, $socketConnector);
 
         // Port 8083 uses unencrypted WebSocket (ws://), not wss://
         $mqttUrl = 'ws://mqtt.sydpower.com:8083/mqtt';
@@ -486,12 +495,13 @@ class AsyncCloudClient extends EventEmitter
 
         $this->logger->debug('Connecting WebSocket', [
             'url' => $mqttUrl,
-            'subprotocols' => $subProtocols
+            'subprotocols' => $subProtocols,
+            'dns_resolver' => '8.8.8.8'
         ]);
 
         // Add timeout to detect hanging promises
         // websocat --protocol mqtt works, so if this times out,
-        // it's a Ratchet/Pawl integration issue
+        // it's a DNS resolution issue in ReactPHP
         return \React\Promise\Timer\timeout(
             $wsConnector($mqttUrl, $subProtocols),
             10.0,

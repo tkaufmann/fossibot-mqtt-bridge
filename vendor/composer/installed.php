@@ -3,7 +3,7 @@
         'name' => 'tkaufmann/fossibot-php',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => '8b17f063cbef6a1b7561cfe7a72143cedf507b09',
+        'reference' => '9c19bfaf6f7b6f3b8c14be9ca5b8a0eaa8c7b555',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -289,6 +289,15 @@
             'aliases' => array(),
             'dev_requirement' => false,
         ),
+        'react/promise-timer' => array(
+            'pretty_version' => 'v1.11.0',
+            'version' => '1.11.0.0',
+            'reference' => '4f70306ed66b8b44768941ca7f142092600fafc1',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../react/promise-timer',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
         'react/socket' => array(
             'pretty_version' => 'v1.16.0',
             'version' => '1.16.0.0',
@@ -490,7 +499,7 @@
         'tkaufmann/fossibot-php' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => '8b17f063cbef6a1b7561cfe7a72143cedf507b09',
+            'reference' => '9c19bfaf6f7b6f3b8c14be9ca5b8a0eaa8c7b555',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
