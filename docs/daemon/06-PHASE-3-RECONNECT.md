@@ -43,13 +43,13 @@ Connection Lost
 
 | Error Type | Detection Method | Recovery Action |
 |------------|------------------|-----------------|
-| **WebSocket disconnect** | Pawl `close` event | Tier 1: Simple reconnect |
-| **MQTT disconnect** | MqttClient exception | Tier 1: Simple reconnect |
-| **Auth token expired** | HTTP 401/403 in API call | Tier 2: Full re-auth |
-| **MQTT auth failure** | CONNACK return code 5 | Tier 2: Full re-auth |
-| **Network timeout** | Promise timeout (10s) | Tier 1: Simple reconnect |
-| **Rate limiting** | HTTP 429 | Tier 3: Exponential backoff |
-| **Server error** | HTTP 5xx | Tier 3: Exponential backoff |
+| **WebSocket disconnect** | Pawl WebSocket `close` event | Tier 1: Simple reconnect |
+| **MQTT auth failure** | CONNACK packet return code 5 in `processMqttPacket()` | Tier 2: Full re-auth |
+| **MQTT token expired** | JWT `exp` claim check in `hasValidTokens()` | Tier 2: Full re-auth |
+| **Auth token expired** | HTTP 401/403 in Connection API call | Tier 2: Full re-auth |
+| **Network timeout** | WebSocket connect promise timeout | Tier 1: Simple reconnect |
+| **Rate limiting** | HTTP 429 in Connection API call | Tier 3: Exponential backoff |
+| **Server error** | HTTP 5xx in Connection API call | Tier 3: Exponential backoff |
 
 ---
 
