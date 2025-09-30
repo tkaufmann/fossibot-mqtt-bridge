@@ -13,6 +13,9 @@ class DeviceState
 {
     // Battery & Power
     public float $soc = 0.0;                    // State of Charge (%)
+    public int $inputWatts = 0;                 // Total Input Power (Register 6)
+    public int $outputWatts = 0;                // Total Output Power (Register 39)
+    public int $dcInputWatts = 0;               // DC Input Power (Register 4)
 
     // Output States (from Register 41 bitfield)
     public bool $usbOutput = false;             // USB ports on/off
@@ -43,6 +46,17 @@ class DeviceState
         // Battery (Register 56 = SoC, not 5 as in TODO - SYSTEM.md shows 56)
         if (isset($registers[56])) {
             $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
+        }
+
+        // Power values
+        if (isset($registers[4])) {
+            $this->dcInputWatts = $registers[4]; // DC Input Power
+        }
+        if (isset($registers[6])) {
+            $this->inputWatts = $registers[6]; // Total Input Power
+        }
+        if (isset($registers[39])) {
+            $this->outputWatts = $registers[39]; // Total Output Power
         }
 
         // Output States (Register 41 bitfield)
