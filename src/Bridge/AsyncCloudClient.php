@@ -899,15 +899,30 @@ class AsyncCloudClient extends EventEmitter
 
         $signature = $this->generateSignature($requestData);
 
-        return $browser->post(
+        $this->logger->debug('Stage 1: About to call $browser->post()', [
+            'url' => \Fossibot\Config::getApiEndpoint(),
+            'browser_class' => get_class($browser),
+        ]);
+
+        $promise = $browser->post(
             \Fossibot\Config::getApiEndpoint(),
             [
                 'Content-Type' => 'application/json',
                 'x-serverless-sign' => $signature,
             ],
             json_encode($requestData)
-        )->then(
+        );
+
+        $this->logger->debug('Stage 1: $browser->post() returned', [
+            'promise_class' => get_class($promise),
+        ]);
+
+        return $promise->then(
             function (\Psr\Http\Message\ResponseInterface $response) {
+                $this->logger->debug('Stage 1: Then handler called (success)', [
+                    'status' => $response->getStatusCode(),
+                ]);
+
                 $body = (string)$response->getBody();
                 $data = json_decode($body, true);
 
@@ -928,6 +943,10 @@ class AsyncCloudClient extends EventEmitter
                 return $token;
             },
             function (\Exception $e) {
+                $this->logger->debug('Stage 1: Rejection handler called', [
+                    'error_class' => get_class($e),
+                ]);
+
                 $this->logger->error('Stage 1 failed', [
                     'error' => $e->getMessage(),
                     'type' => get_class($e),
@@ -1201,9 +1220,17 @@ class AsyncCloudClient extends EventEmitter
      */
     private function createBrowser(): \React\Http\Browser
     {
+        $this->logger->debug('createBrowser: Starting', [
+            'loop_class' => get_class($this->loop),
+        ]);
+
         // Configure DNS resolver to use Google DNS (8.8.8.8)
         $dnsResolverFactory = new \React\Dns\Resolver\Factory();
         $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
+
+        $this->logger->debug('createBrowser: DNS resolver created', [
+            'dns_class' => get_class($dns),
+        ]);
 
         // TLS context for HTTPS certificate validation
         $context = [
@@ -1220,8 +1247,18 @@ class AsyncCloudClient extends EventEmitter
             'timeout' => 15.0,
         ]);
 
+        $this->logger->debug('createBrowser: Socket connector created', [
+            'connector_class' => get_class($socketConnector),
+        ]);
+
         // Create Browser with configured connector
-        return new \React\Http\Browser($socketConnector, $this->loop);
+        $browser = new \React\Http\Browser($socketConnector, $this->loop);
+
+        $this->logger->debug('createBrowser: Browser created', [
+            'browser_class' => get_class($browser),
+        ]);
+
+        return $browser;
     }
 
     /**
