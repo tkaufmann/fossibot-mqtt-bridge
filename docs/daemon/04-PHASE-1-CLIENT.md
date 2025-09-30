@@ -925,17 +925,17 @@ git commit -m "feat(bridge): Add reconnect capability to AsyncCloudClient"
 
 ## ✅ Phase 1 Completion Checklist
 
-- [ ] AsyncCloudClient class implemented (Step 1.1)
-- [ ] Event-based MQTT packet handling (no polling)
-- [ ] Custom MQTT protocol implementation (CONNECT, PUBLISH, SUBSCRIBE, CONNACK, SUBACK, PUBACK)
-- [ ] EventEmitter integration working (connect, message, disconnect, error)
-- [ ] 3-stage auth integration (reuses Connection class)
-- [ ] WebSocket connection via Pawl
-- [ ] Subscribe functionality tested (Step 1.2)
-- [ ] Publish functionality tested (Step 1.3)
-- [ ] Reconnect capability implemented (Step 1.4)
-- [ ] All test scripts pass against real Fossibot Cloud
-- [ ] Code committed with clear messages
+- [x] AsyncCloudClient class implemented (Step 1.1)
+- [x] Event-based MQTT packet handling (no polling)
+- [x] Custom MQTT protocol implementation (CONNECT, PUBLISH, SUBSCRIBE, CONNACK, SUBACK, PUBACK)
+- [x] EventEmitter integration working (connect, message, disconnect, error)
+- [x] 3-stage auth integration (reuses Connection class)
+- [x] WebSocket connection via Pawl (with masked frames fix)
+- [x] Subscribe functionality tested (Step 1.2) - SUBACK confirmed
+- [ ] Publish functionality tested (Step 1.3) - noch nicht getestet mit echtem Command
+- [ ] Reconnect capability implemented (Step 1.4) - noch nicht implementiert
+- [x] Test script passes against real Fossibot Cloud (test_async_cloud_client.php)
+- [x] Code committed with clear messages
 
 ---
 
