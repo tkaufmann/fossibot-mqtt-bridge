@@ -68,14 +68,25 @@ class MqttBridge
         // Setup signal handlers
         $this->setupSignalHandlers();
 
-        // Initialize accounts
+        // Initialize accounts and wait for them to connect
         $this->initializeAccounts();
 
-        // Connect to local broker
-        $this->connectBroker();
+        \React\Promise\all($this->connectionPromises)->then(
+            function () {
+                $this->logger->info('All accounts connected successfully, proceeding with broker connection.');
+                // Connect to local broker
+                $this->connectBroker();
 
-        // Publish initial bridge status
-        $this->publishBridgeStatus();
+                // Publish initial bridge status
+                $this->publishBridgeStatus();
+            },
+            function (\Exception $e) {
+                $this->logger->error('A critical error occurred during account connection, shutting down.', [
+                    'error' => $e->getMessage(),
+                ]);
+                $this->shutdown();
+            }
+        );
 
         // Setup broker message loop (process incoming commands from broker)
         $this->loop->addPeriodicTimer(0.1, function() {

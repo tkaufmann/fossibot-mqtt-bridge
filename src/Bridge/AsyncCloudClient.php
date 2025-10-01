@@ -976,7 +976,7 @@ class AsyncCloudClient extends EventEmitter
     {
         $this->logger->debug('Stage 2: Logging in', ['email' => $this->email]);
 
-        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'user/pub/login',
@@ -1058,7 +1058,7 @@ class AsyncCloudClient extends EventEmitter
     {
         $this->logger->debug('Stage 3: Requesting MQTT token');
 
-        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'common/emqx.getAccessToken',
@@ -1137,7 +1137,7 @@ class AsyncCloudClient extends EventEmitter
     {
         $this->logger->debug('Fetching device list');
 
-        $deviceInfo = new \Fossibot\ValueObject\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'device/list',
@@ -1193,7 +1193,7 @@ class AsyncCloudClient extends EventEmitter
                 $devices = [];
                 foreach ($rows as $deviceData) {
                     try {
-                        $devices[] = \Fossibot\ValueObject\Device::fromApiResponse($deviceData);
+                        $devices[] = \Fossibot\ValueObjects\Device::fromApiResponse($deviceData);
                     } catch (\Exception $e) {
                         $this->logger->warning('Failed to parse device', [
                             'error' => $e->getMessage(),
