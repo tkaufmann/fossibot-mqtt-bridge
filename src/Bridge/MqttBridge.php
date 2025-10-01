@@ -305,6 +305,15 @@ class MqttBridge
             // Reset reconnect counter on success
             $this->brokerReconnectAttempt = 0;
 
+            // Publish availability for all devices from all connected clients
+            foreach ($this->cloudClients as $client) {
+                if ($client->isConnected()) {
+                    foreach ($client->getDevices() as $device) {
+                        $this->publishAvailability($device->getMqttId(), 'online');
+                    }
+                }
+            }
+
         } catch (\Exception $e) {
             $this->handleBrokerConnectionFailure($e);
         }
@@ -437,6 +446,15 @@ class MqttBridge
 
     private function publishAvailability(string $mac, string $status): void
     {
+        // Only publish if broker is connected
+        if ($this->brokerClient === null) {
+            $this->logger->debug('Skipping availability publish - broker not connected yet', [
+                'mac' => $mac,
+                'status' => $status
+            ]);
+            return;
+        }
+
         $topic = "fossibot/$mac/availability";
         $this->brokerClient->publish($topic, $status, 1, true);
 
@@ -454,8 +472,8 @@ class MqttBridge
             foreach ($client->getDevices() as $device) {
                 $devices[] = [
                     'id' => $device->getMqttId(),
-                    'name' => $device->getDeviceName(),
-                    'model' => $device->getModel(),
+                    'name' => $device->deviceName,
+                    'model' => $device->model,
                     'cloudConnected' => $client->isConnected(),
                     'lastSeen' => date('c')
                 ];
