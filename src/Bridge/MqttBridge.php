@@ -40,6 +40,9 @@ class MqttBridge
     private int $maxBrokerReconnectAttempts = 5;
     private array $brokerBackoffDelays = [5, 10, 15, 30, 60]; // seconds
 
+    // Connection promises (must persist to prevent GC cleanup)
+    private array $connectionPromises = [];
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -206,8 +209,8 @@ class MqttBridge
 
             $this->cloudClients[$email] = $client;
 
-            // Connect (async)
-            $client->connect()->then(
+            // Connect (async) - Store promise to prevent GC cleanup
+            $this->connectionPromises[$email] = $client->connect()->then(
                 function() use ($email) {
                     $this->logger->info('Account connected', ['email' => $email]);
                 },
