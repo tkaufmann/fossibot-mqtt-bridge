@@ -34,15 +34,21 @@ final class Device {
 
 	/**
 	 * Create Device from API response array.
+	 *
+	 * Supports both snake_case and camelCase field names for compatibility.
 	 */
 	public static function fromApiResponse( array $data ): self {
+		// Extract model from device_name if model field missing (e.g., "F2400-B" -> "F2400")
+		$deviceName = $data['device_name'] ?? $data['deviceName'] ?? '';
+		$modelFallback = $deviceName ? preg_replace('/-.*$/', '', $deviceName) : 'unknown';
+
 		return new self(
-			deviceId: $data['device_id'] ?? '',
-			deviceName: $data['device_name'] ?? '',
-			productId: $data['product_id'] ?? '',
-			model: $data['model'] ?? '',
-			onlineStatus: (int) ( $data['mqtt_state'] ?? 0 ),
-			createdAt: $data['created_at'] ?? ''
+			deviceId: $data['device_id'] ?? $data['deviceId'] ?? '',
+			deviceName: $deviceName,
+			productId: $data['product_id'] ?? $data['productId'] ?? 'unknown',
+			model: $data['model'] ?? $modelFallback,
+			onlineStatus: (int) ( $data['mqtt_state'] ?? $data['onlineStatus'] ?? 0 ),
+			createdAt: $data['created_at'] ?? $data['createdAt'] ?? date('c')
 		);
 	}
 }
