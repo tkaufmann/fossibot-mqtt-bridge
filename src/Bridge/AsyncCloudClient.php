@@ -1140,11 +1140,11 @@ class AsyncCloudClient extends EventEmitter
         $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
-            '$url' => 'device/list',
+            '$url' => 'client/device/kh/getList',
             'data' => [
                 'locale' => 'en',
-                'pageSize' => 20,
-                'pageNo' => 1,
+                'pageIndex' => 1,
+                'pageSize' => 100,
             ],
             'clientInfo' => $deviceInfo->toArray(),
             'uniIdToken' => $loginToken,
@@ -1179,13 +1179,23 @@ class AsyncCloudClient extends EventEmitter
                     throw new \RuntimeException('Device list: JSON decode error - ' . json_last_error_msg());
                 }
 
+                $this->logger->debug('Device list API response', [
+                    'status' => $response->getStatusCode(),
+                    'has_data' => isset($data['data']),
+                    'response_keys' => array_keys($data ?? []),
+                    'full_response' => $data,
+                ]);
+
                 if (!isset($data['data'])) {
                     throw new \RuntimeException('Device list: Missing data field in response');
                 }
 
                 $rows = $data['data']['rows'] ?? [];
                 if (empty($rows)) {
-                    $this->logger->warning('No devices found in account');
+                    $this->logger->warning('No devices found in account', [
+                        'data_keys' => array_keys($data['data']),
+                        'data_content' => $data['data'],
+                    ]);
                     return [];
                 }
 
