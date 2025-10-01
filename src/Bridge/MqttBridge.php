@@ -43,6 +43,10 @@ class MqttBridge
     // Connection promises (must persist to prevent GC cleanup)
     private array $connectionPromises = [];
 
+    // Device state polling
+    private ?\React\EventLoop\TimerInterface $pollingTimer = null;
+    private float $lastPollTime = 0;
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -124,6 +128,12 @@ class MqttBridge
         $this->loop->addPeriodicTimer(
             $this->config['bridge']['status_publish_interval'] ?? 60,
             fn() => $this->publishBridgeStatus()
+        );
+
+        // Setup device state polling timer (every 30s)
+        $this->pollingTimer = $this->loop->addPeriodicTimer(
+            $this->config['bridge']['device_poll_interval'] ?? 30,
+            fn() => $this->pollDeviceStates()
         );
 
         $this->running = true;
@@ -422,6 +432,12 @@ class MqttBridge
                 'command' => $command->getDescription()
             ]);
 
+            // Trigger immediate poll for settings commands (delayed response)
+            // Output commands (USB/AC/DC) get instant response, no need to poll
+            if ($command->getResponseType() === \Fossibot\Commands\CommandResponseType::DELAYED) {
+                $this->triggerImmediatePoll();
+            }
+
         } catch (\Exception $e) {
             $this->logger->error('Error handling broker command', [
                 'topic' => $topic,
@@ -509,5 +525,73 @@ class MqttBridge
 
         $masked = $local[0] . '***' . $local[strlen($local) - 1];
         return "$masked@$domain";
+    }
+
+    /**
+     * Poll all devices for their current state.
+     * Sends ReadRegistersCommand to each connected device.
+     */
+    private function pollDeviceStates(): void
+    {
+        $this->lastPollTime = microtime(true);
+
+        foreach ($this->cloudClients as $client) {
+            if (!$client->isConnected()) {
+                continue;
+            }
+
+            foreach ($client->getDevices() as $device) {
+                $mac = $device->getMqttId();
+
+                try {
+                    // Create read settings command
+                    $command = \Fossibot\Commands\ReadRegistersCommand::create();
+                    $modbusPayload = $this->payloadTransformer->commandToModbus($command);
+
+                    // Publish to cloud
+                    $cloudTopic = "$mac/client/request/data";
+                    $client->publish($cloudTopic, $modbusPayload);
+
+                    $this->logger->debug('Polling device state', [
+                        'mac' => $mac,
+                        'command' => $command->getDescription()
+                    ]);
+                } catch (\Exception $e) {
+                    $this->logger->error('Failed to poll device', [
+                        'mac' => $mac,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Trigger immediate state poll after command execution.
+     * Cancels and restarts the polling timer for quick feedback.
+     */
+    private function triggerImmediatePoll(): void
+    {
+        // Only trigger if last poll was more than 2 seconds ago
+        // (avoid spam if multiple commands sent quickly)
+        if ((microtime(true) - $this->lastPollTime) < 2.0) {
+            return;
+        }
+
+        $this->logger->debug('Triggering immediate state poll after command');
+
+        // Cancel existing timer
+        if ($this->pollingTimer !== null) {
+            $this->loop->cancelTimer($this->pollingTimer);
+        }
+
+        // Poll immediately
+        $this->pollDeviceStates();
+
+        // Restart periodic timer
+        $this->pollingTimer = $this->loop->addPeriodicTimer(
+            $this->config['bridge']['device_poll_interval'] ?? 30,
+            fn() => $this->pollDeviceStates()
+        );
     }
 }
