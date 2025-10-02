@@ -1,16 +1,16 @@
-# Migration: Vom `MqttWebSocketClient` zum universellen `AsyncMqttClient`
+# Migration: Generischer AsyncMqttClient mit Transport Strategy Pattern
 
 ## Kontext und Hintergrund
 
 ### Das Problem
 Die Bridge verwendet aktuell zwei verschiedene MQTT-Client-Implementierungen:
-1. **Cloud-Verbindung**: `MqttWebSocketClient` (ReactPHP, non-blocking, WebSocket)
+1. **Cloud-Verbindung**: `AsyncCloudClient` (ReactPHP, non-blocking, WebSocket, Fossibot-spezifisch)
 2. **Lokaler Broker**: `php-mqtt/client` (blocking, TCP)
 
 Der blocking Client für den lokalen Broker blockiert die ReactPHP Event Loop, wodurch Timer (Polling, Status-Publishing) nicht feuern können.
 
 ### Die Lösung
-Wir bauen den `MqttWebSocketClient` zu einem universellen `AsyncMqttClient` um, der beide Verbindungstypen (WebSocket + TCP) non-blocking unterstützt.
+Wir erstellen einen neuen generischen `AsyncMqttClient`, der transport-agnostisch ist. Der bestehende `AsyncCloudClient` nutzt ihn intern für die MQTT-Kommunikation, während er weiterhin die Fossibot-spezifische Logik verwaltet.
 
 ### Design-Entscheidung: Strategy Pattern
 Statt die Transport-Logik direkt im Client zu implementieren, verwenden wir das **Strategy Pattern**:
@@ -440,50 +440,44 @@ public function subscribe(string $topic, callable $callback, int $qos = 1): void
 
 ### ✅ Schritt 2.1: Regressionstest - Cloud-Verbindung
 
-**Ziel:** Sicherstellen, dass nichts kaputtgegangen ist.
+**Ziel:** Beweisen, dass der interne Umbau des AsyncCloudClient (Delegation an AsyncMqttClient) die Funktionalität nicht verändert hat.
+
+**WICHTIG:** Die MqttBridge muss weiterhin den `AsyncCloudClient` verwenden, nicht direkt den `AsyncMqttClient`!
+
+**Warum?** Nur der AsyncCloudClient kennt die Fossibot-spezifische Logik (3-Stufen-HTTP-Auth, Device Discovery). Der neue AsyncMqttClient ist absichtlich generisch und kann das nicht.
 
 **Änderungen in `src/Bridge/MqttBridge.php`:**
 
-```php
-// VORHER:
-use Fossibot\Bridge\MqttWebSocketClient;
+**KEINE Änderungen nötig!** Die MqttBridge erstellt weiterhin:
 
-$client = new MqttWebSocketClient(
-    $this->loop,
+```php
+$client = new AsyncCloudClient(
     $account['email'],
     $account['password'],
-    $this->logger
-);
-
-// NACHHER:
-use Fossibot\Bridge\AsyncMqttClient;
-use Fossibot\Bridge\WebSocketTransport;
-
-$transport = new WebSocketTransport(
-    $this->loop,
-    'ws://mqtt.sydpower.com:8083/mqtt',
-    ['mqtt'],
-    $this->logger
-);
-
-$client = new AsyncMqttClient(
-    $transport,
     $this->loop,
     $this->logger
-    // ... andere Parameter
 );
-
-// Authentifizierung separat setzen
-$client->setAuthenticator(fn() => $this->authenticateCloud($email, $password));
 ```
+
+Der Unterschied ist **intern**: AsyncCloudClient nutzt jetzt den neuen AsyncMqttClient mit WebSocketTransport, statt die MQTT-Logik direkt zu implementieren.
 
 **Test:**
 ```bash
+# 1. Alle Phase-1-Änderungen durchgeführt (AsyncMqttClient erstellt, AsyncCloudClient refactored)
+# 2. Bridge starten OHNE Änderungen an MqttBridge
 ./start-debug-bridge.sh
-# Erwartung: Cloud-Verbindung funktioniert wie vorher
-# Polling läuft weiter
-# Keine Errors
+
+# 3. Prüfen:
+# ✅ Cloud-Verbindung funktioniert wie vorher
+# ✅ Polling läuft weiter alle 30s
+# ✅ Device State Updates werden empfangen
+# ✅ Keine Errors in den Logs
 ```
+
+**Erwartetes Verhalten:**
+- Bridge startet normal
+- AsyncCloudClient verbindet zur Cloud (via AsyncMqttClient intern)
+- Alle bisherigen Features funktionieren unverändert
 
 **Status:** [ ] Todo
 
