@@ -44,7 +44,8 @@ class WebSocketTransport implements MqttTransport
         return $connector($this->url, $this->subprotocols)
             ->then(function (WebSocket $connection) {
                 $this->logger->info('WebSocket connected with MQTT subprotocol');
-                return $connection;
+                // Wrap WebSocket in adapter to provide ConnectionInterface
+                return new WebSocketConnectionAdapter($connection);
             });
     }
 }

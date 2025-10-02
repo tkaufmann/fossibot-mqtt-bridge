@@ -60,7 +60,7 @@ enum ConnectionType
 }
 ```
 
-**Status:** [ ] Todo
+**Status:** [x] Abgeschlossen
 
 ---
 
@@ -95,7 +95,7 @@ interface MqttTransport
 }
 ```
 
-**Status:** [ ] Todo
+**Status:** [x] Abgeschlossen
 
 ---
 
@@ -152,7 +152,7 @@ class WebSocketTransport implements MqttTransport
 }
 ```
 
-**Status:** [ ] Todo
+**Status:** [x] Abgeschlossen
 
 ---
 
@@ -213,7 +213,7 @@ class TcpTransport implements MqttTransport
 }
 ```
 
-**Status:** [ ] Todo
+**Status:** [x] Abgeschlossen
 
 ---
 
@@ -649,3 +649,116 @@ Die alte Implementierung ist im Git-History gesichert.
 - Keine zusätzlichen Dependencies nötig
 - Die MQTT-Protokoll-Logik (Packet-Encoding, etc.) bleibt unverändert
 - Nur die Transport-Schicht wird ausgetauscht
+
+---
+
+## Aktueller Stand & Kontext für Neustart
+
+### Was bereits existiert (Stand: Oktober 2025)
+
+**Abgeschlossen:**
+- ✅ `src/Bridge/ConnectionType.php` - Enum für Transport-Typen
+- ✅ `src/Bridge/MqttTransport.php` - Strategy Interface
+- ✅ `src/Bridge/WebSocketTransport.php` - WebSocket-Implementierung
+- ✅ `src/Bridge/TcpTransport.php` - TCP-Implementierung
+
+**Noch NICHT umgesetzt:**
+- ❌ Neuer generischer `AsyncMqttClient` (Datei existiert, ist aber noch alte `MqttWebSocketClient` Klasse)
+- ❌ `AsyncCloudClient` Refactoring (nutzt noch alte Struktur)
+
+### Wichtige bestehende Code-Struktur
+
+**Bridge-Architektur (`src/Bridge/MqttBridge.php`):**
+```php
+// Aktueller Stand (blocking!):
+private ?MqttClient $brokerClient = null;  // php-mqtt/client (BLOCKING!)
+
+// Cloud-Clients:
+private array $cloudClients = [];  // AsyncCloudClient Instanzen
+```
+
+**AsyncCloudClient (`src/Bridge/AsyncCloudClient.php`):**
+- Nutzt aktuell direkten WebSocket-Code (via Ratchet/Pawl)
+- Implementiert 3-stufige HTTP-Authentifizierung
+- Macht Device Discovery
+- Hat eigene MQTT-Logik eingebaut (sollte zu AsyncMqttClient extrahiert werden)
+
+**Wichtige Details aus AsyncCloudClient zum Extrahieren:**
+1. **MQTT Packet Encoding** - Complete implementation vorhanden
+2. **CONNECT Handshake** - Mit JWT-Token als username
+3. **PUBLISH/SUBSCRIBE** - Mit QoS 1 Support
+4. **Packet-ID Management** - Auto-incrementing IDs
+5. **Message Buffer Parsing** - Fragmentierte Packets zusammenbauen
+
+### Was nach Gedächtnisverlust zu lesen ist
+
+**Essenzielle Dokumente (in dieser Reihenfolge):**
+
+1. **migration-mqtt.md** (diese Datei) - Gesamtplan
+2. **SYSTEM.md** - Fossibot MQTT-Protokoll Details
+3. **CLAUDE.md** - PHP 8.4 Standards, Coding Style
+
+**Code zu analysieren:**
+
+4. **src/Bridge/AsyncCloudClient.php** - Um MQTT-Logik zu verstehen die extrahiert werden muss
+5. **src/Bridge/MqttBridge.php** - Um Integration Points zu verstehen
+6. **Implementierte Transports** - Um Pattern zu verstehen:
+   - `src/Bridge/WebSocketTransport.php`
+   - `src/Bridge/TcpTransport.php`
+
+### Kritische Erkenntnisse die NICHT in Dateien stehen
+
+**Problem das wir lösen:**
+- Der `php-mqtt/client` für lokalen Broker ist **blocking**
+- Das blockiert die ReactPHP Event Loop
+- Polling-Timer feuern dadurch nicht
+- **Beweis:** Polling funktioniert NACHDEM wir den blocking `loop()` Call entfernt haben!
+
+**Diagnose-Test Ergebnis:**
+```bash
+# VORHER (mit brokerClient->loop(true) alle 0.1s):
+❌ Polling Timer feuert NICHT
+❌ Event Loop ist tot
+
+# NACHHER (ohne loop() Call):
+✅ Polling Timer feuert alle 30s
+✅ Cloud-Verbindung funktioniert
+❌ Aber: Lokaler Broker empfängt/sendet nichts mehr (erwartet!)
+```
+
+**Design-Entscheidung Begründung:**
+- **NICHT** AsyncCloudClient umbauen/umbenennen → würde Fossibot-Logik vermischen
+- **SONDERN** neuen generischen AsyncMqttClient erstellen → klare Trennung!
+
+```
+AsyncMqttClient (NEU)          AsyncCloudClient (BLEIBT)
+  │                                 │
+  ├─ MQTT Protokoll               ├─ HTTP Auth (3-Stage)
+  ├─ Transport-agnostisch         ├─ Device Discovery
+  ├─ Wiederverwendbar             ├─ Token Management
+  └─ Nutzt MqttTransport          └─ Nutzt AsyncMqttClient intern
+```
+
+### Nächster konkreter Schritt
+
+**Schritt 1.5/1.6:** AsyncMqttClient erstellen
+
+**Was genau extrahieren aus AsyncCloudClient:**
+
+```php
+// Diese Methoden/Logik zu AsyncMqttClient verschieben:
+- buildMqttConnectPacket()      → AsyncMqttClient::connect()
+- buildMqttPublishPacket()      → AsyncMqttClient::publish()
+- buildMqttSubscribePacket()    → AsyncMqttClient::subscribe()
+- parseMqttPacket()             → AsyncMqttClient::handleIncomingData()
+- Packet-ID Management          → AsyncMqttClient::getNextPacketId()
+- Buffer Parsing                → AsyncMqttClient::$mqttBuffer
+
+// Diese Methoden in AsyncCloudClient BEHALTEN:
+- authenticate()                → Cloud-spezifisch!
+- discoverDevices()             → Cloud-spezifisch!
+- requestDeviceList()           → Cloud-spezifisch!
+```
+
+**Code-Vorlage zum Start:**
+Die Grundstruktur steht bereits in Schritt 1.6 der Migration-Dokumentation.
