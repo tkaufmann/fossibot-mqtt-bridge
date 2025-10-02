@@ -95,11 +95,13 @@ class AsyncCloudClient extends EventEmitter
                 return $this->connectMqtt();
             })
             ->then(function() {
+                // MQTT connected, set flag before subscribing
+                $this->connected = true;
+
                 // Phase 4: Subscribe to device topics
                 return $this->subscribeToDeviceTopics();
             })
             ->then(function() {
-                $this->connected = true;
                 $this->emit('connect');
                 $this->logger->info('AsyncCloudClient connected successfully');
             })
@@ -346,8 +348,8 @@ class AsyncCloudClient extends EventEmitter
      */
     private function hasValidTokens(): bool
     {
-        // If Connection object doesn't exist, tokens are invalid
-        if ($this->connection === null) {
+        // Check if we have MQTT token
+        if ($this->mqttToken === null) {
             return false;
         }
 
