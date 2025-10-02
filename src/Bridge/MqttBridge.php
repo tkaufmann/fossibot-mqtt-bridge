@@ -206,7 +206,8 @@ class MqttBridge
 
             // Publish availability for all devices
             foreach ($client->getDevices() as $device) {
-                $this->publishAvailability($device->getMqttId(), 'online');
+                $status = $device->isOnline() ? 'online' : 'offline';
+                $this->publishAvailability($device->getMqttId(), $status);
             }
         });
 
@@ -280,7 +281,8 @@ class MqttBridge
                 foreach ($this->cloudClients as $client) {
                     if ($client->isConnected()) {
                         foreach ($client->getDevices() as $device) {
-                            $this->publishAvailability($device->getMqttId(), 'online');
+                            $status = $device->isOnline() ? 'online' : 'offline';
+                            $this->publishAvailability($device->getMqttId(), $status);
                         }
                     }
                 }
@@ -345,16 +347,26 @@ class MqttBridge
 
     private function handleCloudMessage(string $accountEmail, string $topic, string $payload): void
     {
+        $this->logger->debug('handleCloudMessage called', [
+            'account' => $accountEmail,
+            'topic' => $topic,
+            'payload_length' => strlen($payload)
+        ]);
+
         try {
             // Extract MAC
             $mac = $this->topicTranslator->extractMacFromCloudTopic($topic);
+            $this->logger->debug('MAC extracted', ['mac' => $mac, 'topic' => $topic]);
             if ($mac === null) {
+                $this->logger->warning('MAC extraction failed', ['topic' => $topic]);
                 return;
             }
 
             // Parse Modbus
             $registers = $this->payloadTransformer->parseModbusPayload($payload);
+            $this->logger->debug('Modbus parsed', ['register_count' => count($registers)]);
             if (empty($registers)) {
+                $this->logger->warning('Modbus parsing failed or empty', ['payload_length' => strlen($payload)]);
                 return;
             }
 
@@ -369,9 +381,24 @@ class MqttBridge
             $brokerTopic = $this->topicTranslator->cloudToBroker($topic);
             $this->localBrokerClient->publish($brokerTopic, $json, 1);
 
-            $this->logger->debug('State published', [
+            $this->logger->info('Device state updated', [
                 'mac' => $mac,
-                'soc' => $state->soc
+                'soc' => $state->soc . '%',
+                'input' => $state->inputWatts . 'W',
+                'output' => $state->outputWatts . 'W',
+                'dc_input' => $state->dcInputWatts . 'W',
+                'outputs' => [
+                    'usb' => $state->usbOutput ? 'ON' : 'OFF',
+                    'ac' => $state->acOutput ? 'ON' : 'OFF',
+                    'dc' => $state->dcOutput ? 'ON' : 'OFF',
+                    'led' => $state->ledOutput ? 'ON' : 'OFF'
+                ],
+                'settings' => [
+                    'max_charging' => $state->maxChargingCurrent . 'A',
+                    'discharge_limit' => $state->dischargeLowerLimit . '%',
+                    'ac_limit' => $state->acChargingUpperLimit . '%'
+                ],
+                'timestamp' => $state->lastFullUpdate->format('H:i:s')
             ]);
 
         } catch (\Exception $e) {
@@ -410,7 +437,10 @@ class MqttBridge
 
             $this->logger->info('Command forwarded to cloud', [
                 'mac' => $mac,
-                'command' => $command->getDescription()
+                'command' => $command->getDescription(),
+                'topic' => $cloudTopic,
+                'payload_hex' => bin2hex($modbusPayload),
+                'payload_length' => strlen($modbusPayload)
             ]);
 
             // Trigger immediate poll for settings commands (delayed response)

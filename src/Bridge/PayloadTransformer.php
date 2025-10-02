@@ -22,41 +22,74 @@ class PayloadTransformer
     /**
      * Parse Modbus binary payload to register array.
      *
+     * Supports two response formats:
+     * 1. Standard Modbus RTU Response: [SlaveID][FunctionCode][ByteCount][Data...][CRC]
+     * 2. Full Request/Response: [SlaveID][FunctionCode][StartRegHigh][StartRegLow][CountHigh][CountLow][Data...][CRC]
+     *
      * @param string $binaryPayload Raw Modbus response
      * @return array Register index => value
      */
     public function parseModbusPayload(string $binaryPayload): array
     {
-        if (strlen($binaryPayload) < 3) {
+        $length = strlen($binaryPayload);
+
+        if ($length < 8) {
             return [];
         }
 
-        // Modbus RTU response: [Slave ID][Function Code][Byte Count][Data...][CRC]
-        $header = unpack('CslaveId/CfunctionCode/CbyteCount', substr($binaryPayload, 0, 3));
-        $byteCount = $header['byteCount'];
+        // Parse header
+        $header = unpack('CslaveId/CfunctionCode', substr($binaryPayload, 0, 2));
 
-        $dataStart = 3;
-        $dataEnd = $dataStart + $byteCount;
+        // Check third byte to detect format
+        $thirdByte = ord($binaryPayload[2]);
 
-        if ($dataEnd > strlen($binaryPayload)) {
-            return [];
-        }
+        if ($thirdByte === 0x00) {
+            // Format 2: Full Request/Response with 6-byte header
+            // [SlaveID][FunctionCode][StartRegHigh][StartRegLow][CountHigh][CountLow][Data...][CRC]
+            $fullHeader = unpack(
+                'CslaveId/CfunctionCode/nstartRegister/nregisterCount',
+                substr($binaryPayload, 0, 6)
+            );
 
-        $data = substr($binaryPayload, $dataStart, $byteCount);
-        $registers = [];
+            $dataStart = 6;
+            $dataLength = $length - $dataStart - 2; // Subtract CRC (2 bytes)
+            $data = substr($binaryPayload, $dataStart, $dataLength);
 
-        // Parse 16-bit registers (big-endian)
-        $registerCount = $byteCount / 2;
-        for ($i = 0; $i < $registerCount; $i++) {
-            $offset = $i * 2;
-            if ($offset + 1 < strlen($data)) {
-                $high = ord($data[$offset]);
-                $low = ord($data[$offset + 1]);
-                $registers[$i] = ($high << 8) | $low;
+            $registers = [];
+            $registerCount = strlen($data) / 2;
+
+            for ($i = 0; $i < $registerCount; $i++) {
+                $offset = $i * 2;
+                if ($offset + 1 < strlen($data)) {
+                    $high = ord($data[$offset]);
+                    $low = ord($data[$offset + 1]);
+                    $registers[$i] = ($high << 8) | $low;
+                }
             }
-        }
 
-        return $registers;
+            return $registers;
+
+        } else {
+            // Format 1: Standard Modbus RTU Response
+            // [SlaveID][FunctionCode][ByteCount][Data...][CRC]
+            $byteCount = $thirdByte;
+            $dataStart = 3;
+            $data = substr($binaryPayload, $dataStart, $byteCount);
+
+            $registers = [];
+            $registerCount = $byteCount / 2;
+
+            for ($i = 0; $i < $registerCount; $i++) {
+                $offset = $i * 2;
+                if ($offset + 1 < strlen($data)) {
+                    $high = ord($data[$offset]);
+                    $low = ord($data[$offset + 1]);
+                    $registers[$i] = ($high << 8) | $low;
+                }
+            }
+
+            return $registers;
+        }
     }
 
     /**
