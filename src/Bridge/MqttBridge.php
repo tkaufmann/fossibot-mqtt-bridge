@@ -128,23 +128,21 @@ class MqttBridge
         $this->running = false;
 
         // Publish offline status to broker
-        if ($this->brokerClient !== null) {
-            $this->brokerClient->publish(
+        if ($this->localBrokerClient !== null) {
+            $this->localBrokerClient->publish(
                 'fossibot/bridge/status',
                 'offline',
-                1,
-                true
+                1
             );
 
             // Publish device offline status
             foreach ($this->cloudClients as $email => $client) {
                 foreach ($client->getDevices() as $device) {
                     $mac = $device->getMqttId();
-                    $this->brokerClient->publish(
+                    $this->localBrokerClient->publish(
                         "fossibot/$mac/availability",
                         'offline',
-                        1,
-                        true
+                        1
                     );
                 }
             }
@@ -157,8 +155,8 @@ class MqttBridge
         }
 
         // Disconnect broker
-        if ($this->brokerClient !== null) {
-            $this->brokerClient->disconnect();
+        if ($this->localBrokerClient !== null) {
+            $this->localBrokerClient->disconnect();
         }
 
         // Stop event loop
@@ -375,7 +373,7 @@ class MqttBridge
 
             // Publish to broker
             $brokerTopic = $this->topicTranslator->cloudToBroker($topic);
-            $this->brokerClient->publish($brokerTopic, $json, 1, true);
+            $this->localBrokerClient->publish($brokerTopic, $json, 1);
 
             $this->logger->debug('State published', [
                 'mac' => $mac,
@@ -452,7 +450,7 @@ class MqttBridge
     private function publishAvailability(string $mac, string $status): void
     {
         // Only publish if broker is connected
-        if ($this->brokerClient === null) {
+        if ($this->localBrokerClient === null) {
             $this->logger->debug('Skipping availability publish - broker not connected yet', [
                 'mac' => $mac,
                 'status' => $status
@@ -461,7 +459,7 @@ class MqttBridge
         }
 
         $topic = "fossibot/$mac/availability";
-        $this->brokerClient->publish($topic, $status, 1, true);
+        $this->localBrokerClient->publish($topic, $status, 1);
 
         $this->logger->debug('Published availability', [
             'mac' => $mac,
@@ -503,7 +501,7 @@ class MqttBridge
         ];
 
         $json = json_encode($statusMessage, JSON_THROW_ON_ERROR);
-        $this->brokerClient->publish('fossibot/bridge/status', $json, 1, true);
+        $this->localBrokerClient->publish('fossibot/bridge/status', $json, 1);
 
         $this->logger->debug('Published bridge status');
     }
