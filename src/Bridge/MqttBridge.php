@@ -76,28 +76,8 @@ class MqttBridge
         \React\Promise\all($this->connectionPromises)->then(
             function () {
                 $this->logger->info('All accounts connected successfully, proceeding with broker connection.');
-                // Connect to local broker
+                // Connect to local broker (async)
                 $this->connectBroker();
-
-                // Publish initial bridge status
-                $this->publishBridgeStatus();
-
-                // Setup status publish timer (every 60s) - AFTER connections are established
-                $this->loop->addPeriodicTimer(
-                    $this->config['bridge']['status_publish_interval'] ?? 60,
-                    fn() => $this->publishBridgeStatus()
-                );
-
-                // Setup device state polling timer (every 30s) - AFTER connections are established
-                $this->pollingTimer = $this->loop->addPeriodicTimer(
-                    $this->config['bridge']['device_poll_interval'] ?? 30,
-                    fn() => $this->pollDeviceStates()
-                );
-
-                $this->logger->debug('Periodic timers started', [
-                    'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
-                    'polling_interval' => $this->config['bridge']['device_poll_interval'] ?? 30
-                ]);
             },
             function (\Exception $e) {
                 $this->logger->error('A critical error occurred during account connection, shutting down.', [
@@ -308,8 +288,22 @@ class MqttBridge
                 // Publish initial bridge status
                 $this->publishBridgeStatus();
 
-                // Start periodic timers
-                $this->startTimers();
+                // Setup status publish timer (every 60s)
+                $this->loop->addPeriodicTimer(
+                    $this->config['bridge']['status_publish_interval'] ?? 60,
+                    fn() => $this->publishBridgeStatus()
+                );
+
+                // Setup device state polling timer (every 30s)
+                $this->pollingTimer = $this->loop->addPeriodicTimer(
+                    $this->config['bridge']['device_poll_interval'] ?? 30,
+                    fn() => $this->pollDeviceStates()
+                );
+
+                $this->logger->debug('Periodic timers started', [
+                    'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
+                    'polling_interval' => $this->config['bridge']['device_poll_interval'] ?? 30
+                ]);
             })
             ->otherwise(function(\Exception $e) {
                 $this->handleBrokerConnectionFailure($e);
