@@ -54,24 +54,10 @@ class DeviceState
         $now = new DateTime();
 
         // Battery (Register 56 = SoC)
-        // Priority: /client/04 (immediate) > /client/data (polling)
-        if (isset($registers[56])) {
-            $shouldUpdateSoc = false;
-
-            if ($isImmediateResponse) {
-                $shouldUpdateSoc = true;
-                $this->lastSocUpdate = $now;
-            } elseif ($isPollingData) {
-                $timeSinceLastSocUpdate = $now->getTimestamp() - $this->lastSocUpdate->getTimestamp();
-                $shouldUpdateSoc = $timeSinceLastSocUpdate > 35;
-            } else {
-                $shouldUpdateSoc = true;
-            }
-
-            if ($shouldUpdateSoc) {
-                $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
-                $this->lastSocUpdate = $now;
-            }
+        // ONLY update from /client/04 - /client/data has cached/stale values
+        if (isset($registers[56]) && $isImmediateResponse) {
+            $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
+            $this->lastSocUpdate = $now;
         }
 
         // Power values (assumed live in all topics based on testing)
@@ -86,30 +72,16 @@ class DeviceState
         }
 
         // Output States (Register 41 bitfield)
-        // Priority: /client/04 (immediate) > /client/data (polling)
-        if (isset($registers[41])) {
-            $shouldUpdateOutputs = false;
-
-            if ($isImmediateResponse) {
-                $shouldUpdateOutputs = true;
-                $this->lastOutputUpdate = $now;
-            } elseif ($isPollingData) {
-                $timeSinceLastOutputUpdate = $now->getTimestamp() - $this->lastOutputUpdate->getTimestamp();
-                $shouldUpdateOutputs = $timeSinceLastOutputUpdate > 35;
-            } else {
-                $shouldUpdateOutputs = true;
-            }
-
-            if ($shouldUpdateOutputs) {
-                $bitfield = $registers[41];
-                // Use bit-masks from hardware testing (not single bits!)
-                // USB and DC share Bit 7
-                $this->usbOutput = ($bitfield & 640) !== 0;    // 0x280, Bits 7, 9
-                $this->dcOutput = ($bitfield & 1152) !== 0;    // 0x480, Bits 7, 10
-                $this->acOutput = ($bitfield & 2052) !== 0;    // 0x804, Bits 2, 11
-                $this->ledOutput = ($bitfield & 4096) !== 0;   // 0x1000, Bit 12
-                $this->lastOutputUpdate = $now;
-            }
+        // ONLY update from /client/04 - /client/data has cached/stale values
+        if (isset($registers[41]) && $isImmediateResponse) {
+            $bitfield = $registers[41];
+            // Use bit-masks from hardware testing (not single bits!)
+            // USB and DC share Bit 7
+            $this->usbOutput = ($bitfield & 640) !== 0;    // 0x280, Bits 7, 9
+            $this->dcOutput = ($bitfield & 1152) !== 0;    // 0x480, Bits 7, 10
+            $this->acOutput = ($bitfield & 2052) !== 0;    // 0x804, Bits 2, 11
+            $this->ledOutput = ($bitfield & 4096) !== 0;   // 0x1000, Bit 12
+            $this->lastOutputUpdate = $now;
         }
 
         // Settings
