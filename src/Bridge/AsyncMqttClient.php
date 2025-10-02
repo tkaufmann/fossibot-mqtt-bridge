@@ -33,6 +33,7 @@ class AsyncMqttClient extends EventEmitter
     private int $mqttPacketId = 1;
     private array $pendingSubscriptions = [];
     private array $activeSubscriptions = [];
+    private ?\React\EventLoop\TimerInterface $keepAliveTimer = null;
 
     // Connection parameters
     private string $clientId;
@@ -76,6 +77,7 @@ class AsyncMqttClient extends EventEmitter
             ->then(function () {
                 $this->connected = true;
                 $this->logger->info('AsyncMqttClient connected successfully');
+                $this->startKeepAliveTimer();
                 $this->emit('connect');
             });
     }
@@ -90,6 +92,12 @@ class AsyncMqttClient extends EventEmitter
         $this->logger->info('AsyncMqttClient disconnecting');
 
         $this->connected = false;
+
+        // Stop keep-alive timer
+        if ($this->keepAliveTimer !== null) {
+            $this->loop->cancelTimer($this->keepAliveTimer);
+            $this->keepAliveTimer = null;
+        }
 
         if ($this->connection !== null) {
             // Send MQTT DISCONNECT packet
@@ -420,5 +428,35 @@ class AsyncMqttClient extends EventEmitter
             $this->mqttPacketId = 1;
         }
         return $id;
+    }
+
+    /**
+     * Start keep-alive timer to send periodic PINGREQ packets.
+     *
+     * The timer interval is set to 80% of the keep-alive interval
+     * to ensure pings are sent before the broker times out.
+     */
+    private function startKeepAliveTimer(): void
+    {
+        // Only start timer if keep-alive is enabled
+        if ($this->keepAlive <= 0) {
+            return;
+        }
+
+        // Set interval to 80% of keep-alive to ping before timeout
+        $interval = $this->keepAlive * 0.8;
+
+        $this->keepAliveTimer = $this->loop->addPeriodicTimer($interval, function () {
+            if ($this->connected && $this->connection !== null) {
+                $this->logger->debug('Sending MQTT PINGREQ');
+                // MQTT PINGREQ packet: 0xC0 0x00
+                $this->connection->write("\xc0\x00");
+            }
+        });
+
+        $this->logger->debug('Keep-alive timer started', [
+            'interval' => $interval,
+            'keepAlive' => $this->keepAlive
+        ]);
     }
 }
