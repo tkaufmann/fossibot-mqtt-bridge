@@ -217,55 +217,147 @@ class TcpTransport implements MqttTransport
 
 ---
 
-### ✅ Schritt 1.5: MqttWebSocketClient → AsyncMqttClient umbenennen
+### ✅ Schritt 1.5: Neuen AsyncMqttClient erstellen (MQTT-Engine)
 
-**Aktionen:**
-1. Datei umbenennen: `src/Bridge/MqttWebSocketClient.php` → `src/Bridge/AsyncMqttClient.php`
-2. Klassenname ändern: `class MqttWebSocketClient` → `class AsyncMqttClient`
-3. PHPDoc aktualisieren
+**WICHTIGE ARCHITEKTUR-ENTSCHEIDUNG:**
+
+Nach Analyse des bestehenden Codes haben wir erkannt, dass `AsyncCloudClient` bereits existiert und sehr Fossibot-spezifisch ist (HTTP Auth, Device Discovery, etc.).
+
+**Statt umzubenennen, erstellen wir eine NEUE Architektur:**
+
+```
+AsyncMqttClient (NEU)
+  ├─ Generischer MQTT-Protokoll-Client
+  ├─ Transport-agnostisch (via MqttTransport Interface)
+  └─ Keine Fossibot-spezifische Logik
+
+AsyncCloudClient (BLEIBT)
+  ├─ Fossibot-spezifische Logik (3-Stage Auth, Device Discovery)
+  └─ Nutzt intern AsyncMqttClient mit WebSocketTransport
+```
+
+**Warum diese Architektur?**
+- ✅ **Single Responsibility:** AsyncMqttClient = MQTT-Protokoll, AsyncCloudClient = Fossibot-Business-Logic
+- ✅ **Wiederverwendbar:** AsyncMqttClient kann für beliebige MQTT-Broker genutzt werden
+- ✅ **Testbar:** MQTT-Logik isoliert testbar ohne Fossibot-Dependencies
+- ✅ **Wartbar:** Klare Trennung, keine `if (cloud) {...} else {...}` Code Smells
+
+**Datei:** `src/Bridge/AsyncMqttClient.php` (NEU erstellen)
+
+**Was extrahieren wir aus AsyncCloudClient?**
+1. MQTT Packet Encoding/Decoding
+2. CONNECT, PUBLISH, SUBSCRIBE, PUBACK Handling
+3. Packet-ID Management
+4. Message Buffer Parsing
+5. Event Emission (message, connect, disconnect)
+
+**Was NICHT übernehmen:**
+- HTTP Authentication (bleibt in AsyncCloudClient)
+- Device Discovery (bleibt in AsyncCloudClient)
+- Token Management (bleibt in AsyncCloudClient)
 
 **Status:** [ ] Todo
 
 ---
 
-### ✅ Schritt 1.6: AsyncMqttClient refactoren - Transport Strategy Pattern
+### ✅ Schritt 1.6: AsyncMqttClient Grundstruktur
 
-**Änderungen in `src/Bridge/AsyncMqttClient.php`:**
-
-#### Constructor anpassen:
+**Datei:** `src/Bridge/AsyncMqttClient.php`
 
 ```php
-public function __construct(
-    private readonly MqttTransport $transport,
-    private readonly LoopInterface $loop,
-    private readonly LoggerInterface $logger,
-    // ... andere MQTT-spezifische Parameter
-) {
-}
-```
+<?php
 
-#### Connection-Methode anpassen:
+declare(strict_types=1);
 
-**Vorher:**
-```php
-public function connect(): PromiseInterface
+namespace Fossibot\Bridge;
+
+use Evenement\EventEmitter;
+use Psr\Log\LoggerInterface;
+use React\EventLoop\LoopInterface;
+use React\Promise\PromiseInterface;
+use React\Socket\ConnectionInterface;
+
+/**
+ * Generic async MQTT client using ReactPHP.
+ *
+ * Transport-agnostic MQTT protocol implementation that works with
+ * any MqttTransport (WebSocket, TCP, TLS, etc.).
+ *
+ * Events:
+ * - 'connect' => function()
+ * - 'message' => function(string $topic, string $payload)
+ * - 'disconnect' => function()
+ * - 'error' => function(\Exception $e)
+ */
+class AsyncMqttClient extends EventEmitter
 {
-    // Direkte WebSocket-Logik hier...
-    $connector = new Connector($this->loop);
-    return $connector($url, ['mqtt'])...
-}
-```
+    private ?ConnectionInterface $connection = null;
+    private bool $connected = false;
 
-**Nachher:**
-```php
-public function connect(): PromiseInterface
-{
-    // Delegiere an Transport-Strategy
-    return $this->transport->connect()
-        ->then(function (ConnectionInterface $connection) {
-            $this->connection = $connection;
-            // ... restliche MQTT-Setup-Logik
-        });
+    // MQTT Protocol State
+    private string $mqttBuffer = '';
+    private int $mqttPacketId = 1;
+    private array $pendingSubscriptions = [];
+    private array $activeSubscriptions = [];
+
+    public function __construct(
+        private readonly MqttTransport $transport,
+        private readonly string $clientId,
+        private readonly LoopInterface $loop,
+        private readonly LoggerInterface $logger,
+        private readonly ?string $username = null,
+        private readonly ?string $password = null
+    ) {
+    }
+
+    /**
+     * Connect to MQTT broker.
+     *
+     * @return PromiseInterface Resolves when connected
+     */
+    public function connect(): PromiseInterface
+    {
+        return $this->transport->connect()
+            ->then(function (ConnectionInterface $connection) {
+                $this->connection = $connection;
+                return $this->performMqttHandshake();
+            })
+            ->then(function () {
+                $this->setupConnectionHandlers();
+                $this->connected = true;
+                $this->emit('connect');
+            });
+    }
+
+    private function performMqttHandshake(): PromiseInterface
+    {
+        // Send MQTT CONNECT packet
+        // Wait for CONNACK
+        // Return promise
+    }
+
+    private function setupConnectionHandlers(): void
+    {
+        // Setup data handler for incoming MQTT packets
+        // Setup close handler
+        // Setup error handler
+    }
+
+    public function publish(string $topic, string $payload, int $qos = 0): PromiseInterface
+    {
+        // Build MQTT PUBLISH packet
+        // Send via connection
+        // Handle QoS acknowledgment
+    }
+
+    public function subscribe(string $topic, callable $callback, int $qos = 0): PromiseInterface
+    {
+        // Build MQTT SUBSCRIBE packet
+        // Send via connection
+        // Store callback for topic
+    }
+
+    // ... weitere MQTT-Methoden
 }
 ```
 
@@ -273,28 +365,70 @@ public function connect(): PromiseInterface
 
 ---
 
-### ✅ Schritt 1.7: Authentifizierungs-Logik aufspalten
+### ✅ Schritt 1.7: AsyncCloudClient refactoren - Delegation an AsyncMqttClient
 
-**Problem:** Die 3-stufige HTTP-Authentifizierung wird nur für Cloud (WebSocket) benötigt, nicht für lokalen Broker (TCP).
+**Änderungen in `src/Bridge/AsyncCloudClient.php`:**
 
-**Lösung:** Authentifizierung als optionalen Parameter oder separate Methode:
-
+**Neue Property:**
 ```php
-private ?callable $authenticator = null;
+private ?AsyncMqttClient $mqttClient = null;
+```
 
-public function setAuthenticator(callable $authenticator): void
-{
-    $this->authenticator = $authenticator;
-}
+**Connect-Methode anpassen:**
 
+**VORHER (direkte WebSocket-Logik):**
+```php
 public function connect(): PromiseInterface
 {
-    $promise = $this->authenticator !== null
-        ? ($this->authenticator)()  // HTTP Auth für Cloud
-        : \React\Promise\resolve(); // Keine Auth für lokalen Broker
+    return $this->authenticate()
+        ->then(fn() => $this->discoverDevices())
+        ->then(fn() => $this->connectWebSocket())  // Direkt
+        ->then(fn() => $this->subscribeMqttTopics());
+}
+```
 
-    return $promise->then(fn() => $this->transport->connect())
-        ->then(fn($conn) => $this->setupMqttConnection($conn));
+**NACHHER (Delegation):**
+```php
+public function connect(): PromiseInterface
+{
+    return $this->authenticate()
+        ->then(fn() => $this->discoverDevices())
+        ->then(fn() => $this->connectMqtt())  // Delegiert!
+        ->then(fn() => $this->subscribeMqttTopics());
+}
+
+private function connectMqtt(): PromiseInterface
+{
+    $transport = new WebSocketTransport(
+        $this->loop,
+        'ws://mqtt.sydpower.com:8083/mqtt',
+        ['mqtt'],
+        $this->logger
+    );
+
+    $this->mqttClient = new AsyncMqttClient(
+        $transport,
+        $this->generateClientId(),
+        $this->loop,
+        $this->logger,
+        $this->mqttToken,  // JWT als username
+        'helloyou'         // Password
+    );
+
+    return $this->mqttClient->connect();
+}
+```
+
+**Alle MQTT-Methoden delegieren:**
+```php
+public function publish(string $topic, string $payload, int $qos = 1): void
+{
+    $this->mqttClient->publish($topic, $payload, $qos);
+}
+
+public function subscribe(string $topic, callable $callback, int $qos = 1): void
+{
+    $this->mqttClient->subscribe($topic, $callback, $qos);
 }
 ```
 
