@@ -160,10 +160,10 @@ class PayloadTransformer
                 (int)($data['amperes'] ?? throw new \InvalidArgumentException('Missing amperes parameter'))
             ),
             'set_discharge_limit' => new DischargeLowerLimitCommand(
-                (float)($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter'))
+                (int)round(($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter')) * 10)
             ),
             'set_ac_charging_limit' => new AcChargingUpperLimitCommand(
-                (float)($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter'))
+                (int)round(($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter')) * 10)
             ),
             default => throw new \InvalidArgumentException("Unknown action: $action")
         };

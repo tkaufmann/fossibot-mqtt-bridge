@@ -370,8 +370,27 @@ class MqttBridge
                 return;
             }
 
-            // Update state
-            $this->stateManager->updateDeviceState($mac, $registers);
+            // DEBUG: Log raw Register 41 and 56 values from each topic
+            if (isset($registers[41]) || isset($registers[56])) {
+                $topicType = str_contains($topic, '/client/04') ? 'IMMEDIATE' : 'POLLING';
+                $logData = ['topic' => $topic];
+
+                if (isset($registers[41])) {
+                    $logData['register_41'] = $registers[41];
+                    $logData['r41_hex'] = sprintf('0x%X', $registers[41]);
+                    $logData['r41_binary'] = sprintf('0b%016b', $registers[41]);
+                }
+
+                if (isset($registers[56])) {
+                    $logData['register_56'] = $registers[56];
+                    $logData['soc'] = round($registers[56] / 1000 * 100, 1) . '%';
+                }
+
+                $this->logger->info("RAW Registers from {$topicType}", $logData);
+            }
+
+            // Update state (pass topic for priority handling)
+            $this->stateManager->updateDeviceState($mac, $registers, $topic);
 
             // Get state and convert to JSON
             $state = $this->stateManager->getDeviceState($mac);

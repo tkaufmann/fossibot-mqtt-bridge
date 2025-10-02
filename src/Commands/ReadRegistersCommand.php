@@ -61,4 +61,12 @@ class ReadRegistersCommand extends Command
     {
         return "Read {$this->count} registers starting from {$this->startRegister}";
     }
+
+    /**
+     * Create a ReadRegistersCommand with default F2400 parameters (80 registers from 0).
+     */
+    public static function create(): self
+    {
+        return new self(startRegister: 0, count: 80);
+    }
 }

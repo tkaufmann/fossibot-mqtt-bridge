@@ -27,11 +27,15 @@ class DeviceStateManager
 
     /**
      * Update device state from MQTT registers and trigger callbacks.
+     *
+     * @param string $macAddress Device MAC address
+     * @param array $registers Modbus register array
+     * @param string|null $sourceTopic MQTT topic that triggered this update
      */
-    public function updateDeviceState(string $macAddress, array $registers): void
+    public function updateDeviceState(string $macAddress, array $registers, ?string $sourceTopic = null): void
     {
         $state = $this->getDeviceState($macAddress);
-        $state->updateFromRegisters($registers);
+        $state->updateFromRegisters($registers, $sourceTopic);
 
         // Trigger callbacks for this device
         if (isset($this->callbacks[$macAddress])) {

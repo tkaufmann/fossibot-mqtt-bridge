@@ -30,25 +30,51 @@ class DeviceState
 
     // Metadata
     public DateTime $lastFullUpdate;
+    public DateTime $lastOutputUpdate;  // Track when output states were last updated
+    public DateTime $lastSocUpdate;     // Track when SoC was last updated
 
     public function __construct()
     {
         $this->lastFullUpdate = new DateTime('1970-01-01'); // "never updated"
+        $this->lastOutputUpdate = new DateTime('1970-01-01'); // "never updated"
+        $this->lastSocUpdate = new DateTime('1970-01-01'); // "never updated"
     }
 
     /**
      * Update state from F2400 register array.
      *
      * @param array $registers Modbus registers (index => value)
+     * @param string|null $sourceTopic MQTT topic that triggered this update
      */
-    public function updateFromRegisters(array $registers): void
+    public function updateFromRegisters(array $registers, ?string $sourceTopic = null): void
     {
-        // Battery (Register 56 = SoC, not 5 as in TODO - SYSTEM.md shows 56)
+        // Determine if this is an immediate response topic (/client/04)
+        $isImmediateResponse = $sourceTopic !== null && str_contains($sourceTopic, '/client/04');
+        $isPollingData = $sourceTopic !== null && str_contains($sourceTopic, '/client/data');
+        $now = new DateTime();
+
+        // Battery (Register 56 = SoC)
+        // Priority: /client/04 (immediate) > /client/data (polling)
         if (isset($registers[56])) {
-            $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
+            $shouldUpdateSoc = false;
+
+            if ($isImmediateResponse) {
+                $shouldUpdateSoc = true;
+                $this->lastSocUpdate = $now;
+            } elseif ($isPollingData) {
+                $timeSinceLastSocUpdate = $now->getTimestamp() - $this->lastSocUpdate->getTimestamp();
+                $shouldUpdateSoc = $timeSinceLastSocUpdate > 35;
+            } else {
+                $shouldUpdateSoc = true;
+            }
+
+            if ($shouldUpdateSoc) {
+                $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
+                $this->lastSocUpdate = $now;
+            }
         }
 
-        // Power values
+        // Power values (assumed live in all topics based on testing)
         if (isset($registers[4])) {
             $this->dcInputWatts = $registers[4]; // DC Input Power
         }
@@ -60,13 +86,30 @@ class DeviceState
         }
 
         // Output States (Register 41 bitfield)
+        // Priority: /client/04 (immediate) > /client/data (polling)
         if (isset($registers[41])) {
-            $bitfield = $registers[41];
-            // Based on SYSTEM.md: USB=Bit 6, DC=Bit 5, AC=Bit 4, LED=Bit 3
-            $this->usbOutput = ($bitfield & (1 << 6)) !== 0;
-            $this->dcOutput = ($bitfield & (1 << 5)) !== 0;
-            $this->acOutput = ($bitfield & (1 << 4)) !== 0;
-            $this->ledOutput = ($bitfield & (1 << 3)) !== 0;
+            $shouldUpdateOutputs = false;
+
+            if ($isImmediateResponse) {
+                $shouldUpdateOutputs = true;
+                $this->lastOutputUpdate = $now;
+            } elseif ($isPollingData) {
+                $timeSinceLastOutputUpdate = $now->getTimestamp() - $this->lastOutputUpdate->getTimestamp();
+                $shouldUpdateOutputs = $timeSinceLastOutputUpdate > 35;
+            } else {
+                $shouldUpdateOutputs = true;
+            }
+
+            if ($shouldUpdateOutputs) {
+                $bitfield = $registers[41];
+                // Use bit-masks from hardware testing (not single bits!)
+                // USB and DC share Bit 7
+                $this->usbOutput = ($bitfield & 640) !== 0;    // 0x280, Bits 7, 9
+                $this->dcOutput = ($bitfield & 1152) !== 0;    // 0x480, Bits 7, 10
+                $this->acOutput = ($bitfield & 2052) !== 0;    // 0x804, Bits 2, 11
+                $this->ledOutput = ($bitfield & 4096) !== 0;   // 0x1000, Bit 12
+                $this->lastOutputUpdate = $now;
+            }
         }
 
         // Settings

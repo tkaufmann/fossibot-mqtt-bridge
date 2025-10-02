@@ -215,13 +215,21 @@ These commands trigger **instant device responses** via dedicated topic:
 
 # ✅ Response Data:
 - 81 registers returned within seconds
-- Register 41 contains output status bitfield
-- USB State = Bit 6, DC = Bit 5, AC = Bit 4, LED = Bit 3
+- Register 41 contains output status bitfield using BIT-MASKS (not single bits):
+  - USB = 640 (0x280, Bits 7+9)
+  - AC = 2052 (0x804, Bits 2+11)
+  - DC = 1152 (0x480, Bits 7+10)
+  - LED = 4096 (0x1000, Bit 12)
+  - IMPORTANT: USB and DC share Bit 7!
 
 # ✅ Example Flow:
 send_command(REG_ENABLE_USB)  # Send USB ON command
 # → Device immediately publishes to /client/04
-# → Register 41 bit 6 = 1 (USB now ON)
+# → Register 41 contains bit-mask 640 (USB now ON)
+
+# ⚠️ IMPORTANT: Device only sends /client/04 on ACTUAL state changes!
+# - Redundant commands (e.g., USB ON when already ON) produce NO /client/04 response
+# - Device may also send spontaneous /client/04 updates when state changes locally
 ```
 
 #### Pattern 2: Settings Commands (Delayed/No Immediate Response)
@@ -293,14 +301,27 @@ def parse_device_data(registers):
     total_input = registers[6]   # Total Input Power (W)
     total_output = registers[39] # Total Output Power (W)
 
-    # Output states (Register 41 - Bitfield)
+    # Output states (Register 41 - Bitfield using BIT-MASKS)
     outputs = registers[41]
-    binary_str = format(outputs, '016b')
 
-    usb_output = bool(int(binary_str[-1]))    # Bit 0
-    dc_output = bool(int(binary_str[-2]))     # Bit 1
-    ac_output = bool(int(binary_str[-3]))     # Bit 2
-    led_output = bool(int(binary_str[-4]))    # Bit 3
+    # IMPORTANT: Use bit-masks, not single bit positions!
+    # USB and DC share Bit 7
+    usb_output = (outputs & 640) != 0     # Bits 7, 9
+    dc_output = (outputs & 1152) != 0     # Bits 7, 10
+    ac_output = (outputs & 2052) != 0     # Bits 2, 11
+    led_output = (outputs & 4096) != 0    # Bit 12
+
+    # Reference: Register 41 Bit-Mapping (Hardware-Verified Oct 2025)
+    # | Output | Decimal | Hex    | Binary             | Bits      |
+    # |--------|---------|--------|--------------------|-----------|
+    # | USB    | 640     | 0x280  | 0b0000001010000000 | 7, 9      |
+    # | AC     | 2052    | 0x804  | 0b0000100000000100 | 2, 11     |
+    # | DC     | 1152    | 0x480  | 0b0000010010000000 | 7, 10     |
+    # | LED    | 4096    | 0x1000 | 0b0001000000000000 | 12        |
+    #
+    # Combined values are additive with bit-sharing:
+    # USB+DC = 1664 (not 1792) because Bit 7 is shared
+    # USB+AC = 2692, AC+DC = 3204, USB+AC+DC = 3716, All ON = 7812
 
     return {
         "soc": soc_percent,
@@ -313,6 +334,78 @@ def parse_device_data(registers):
         "ledOutput": led_output
     }
 ```
+
+### Topic Priority and State Management
+
+**⚠️ CRITICAL**: Two topics can provide conflicting state data!
+
+#### Verified Behavior (Hardware-Tested October 2025)
+
+**Topics:**
+1. **`{device_mac}/device/response/client/04`** - Immediate command responses
+   - Triggered by: Output control commands that cause actual state changes
+   - Timing: Within 1-2 seconds of command
+   - Priority: **HIGHEST** - Always use this data when available
+   - Caveat: Only sent on actual state changes, not redundant commands
+
+2. **`{device_mac}/device/response/client/data`** - Periodic polling
+   - Triggered by: Automatic device polling (every 30 seconds)
+   - Timing: Regular 30-second intervals
+   - Priority: **LOWER** - May contain cached/outdated output states
+   - Always use: For power values, SoC, settings (not affected by caching)
+
+**Implementation Strategy:**
+```python
+class DeviceState:
+    def __init__(self):
+        self.last_output_update = datetime(1970, 1, 1)  # Never updated
+
+    def update_from_registers(self, registers, source_topic):
+        # Determine topic type
+        is_immediate = '/client/04' in source_topic
+        is_polling = '/client/data' in source_topic
+
+        # Always update power/battery/settings from any topic
+        self.soc = registers[56] / 1000 * 100
+        self.input_watts = registers[6]
+        self.output_watts = registers[39]
+        # ... other non-output values
+
+        # Smart priority for output states (Register 41)
+        should_update_outputs = False
+        now = datetime.now()
+
+        if is_immediate:
+            # /client/04 always wins (highest priority)
+            should_update_outputs = True
+            self.last_output_update = now
+        elif is_polling:
+            # /client/data only if no recent /client/04 (>35 seconds)
+            time_since_last = (now - self.last_output_update).total_seconds()
+            if time_since_last > 35:  # Longer than polling interval
+                should_update_outputs = True
+
+        if should_update_outputs:
+            bitfield = registers[41]
+            # Use bit-masks (not single bits!)
+            self.usb_output = (bitfield & 640) != 0    # Bits 7, 9
+            self.dc_output = (bitfield & 1152) != 0    # Bits 7, 10
+            self.ac_output = (bitfield & 2052) != 0    # Bits 2, 11
+            self.led_output = (bitfield & 4096) != 0   # Bit 12
+```
+
+**Why 35-second threshold?**
+- Polling interval is 30 seconds
+- Threshold must be longer to prevent /client/data override
+- 35 seconds ensures /client/04 preferred for full polling cycle
+
+**Edge Cases Observed (Hardware-Verified):**
+1. **Redundant Command**: USB ON when already ON → No /client/04 response
+2. **Spontaneous Update**: Device may send /client/04 without external command (internal events)
+3. **Manual Button Press**: Does NOT trigger /client/04, state appears in next /client/data
+4. **Race Condition**: /client/04 followed by /client/data within seconds → Priority system handles correctly
+5. **/client/data Caching**: Register 41 values in /client/data can be outdated/cached during active session
+6. **Bridge Restart**: After reconnect, /client/data immediately contains fresh Register 41 values (no caching across sessions)
 
 ### Critical Implementation Notes
 
