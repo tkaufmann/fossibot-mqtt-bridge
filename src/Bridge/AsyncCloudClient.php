@@ -205,31 +205,31 @@ class AsyncCloudClient extends EventEmitter
     /**
      * Subscribe to MQTT topic.
      */
-    public function subscribe(string $topic): void
+    public function subscribe(string $topic, int $qos = 0): PromiseInterface
     {
         if (!$this->connected || $this->mqttClient === null) {
             throw new \RuntimeException('Cannot subscribe: not connected');
         }
 
-        $this->mqttClient->subscribe($topic, 0);
-        $this->logger->debug('Subscribed to topic', ['topic' => $topic]);
+        $this->logger->debug('Subscribing to topic', ['topic' => $topic]);
+        return $this->mqttClient->subscribe($topic, $qos);
     }
 
     /**
      * Publish to MQTT topic.
      */
-    public function publish(string $topic, string $payload, int $qos = 1): void
+    public function publish(string $topic, string $payload, int $qos = 1): PromiseInterface
     {
         if (!$this->connected || $this->mqttClient === null) {
             throw new \RuntimeException('Cannot publish: not connected');
         }
 
-        $this->mqttClient->publish($topic, $payload, $qos);
-        $this->logger->debug('Published to topic', [
+        $this->logger->debug('Publishing to topic', [
             'topic' => $topic,
             'payload_length' => strlen($payload),
             'qos' => $qos
         ]);
+        return $this->mqttClient->publish($topic, $payload, $qos);
     }
 
     // --- Private Methods ---
@@ -418,13 +418,6 @@ class AsyncCloudClient extends EventEmitter
     private function connectMqtt(): PromiseInterface
     {
         $this->logger->debug('Connecting MQTT client via WebSocket transport');
-
-        // Configure DNS resolver to use Google DNS (8.8.8.8)
-        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
-        $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
-
-        // Create socket connector with explicit DNS resolver
-        $socketConnector = new \React\Socket\Connector(['dns' => $dns]);
 
         // Create WebSocket transport
         $transport = new WebSocketTransport(

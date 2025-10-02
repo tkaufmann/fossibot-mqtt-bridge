@@ -4,8 +4,6 @@ declare(strict_types=1);
 namespace Fossibot\Bridge;
 
 use Fossibot\Device\DeviceStateManager;
-use PhpMqtt\Client\MqttClient;
-use PhpMqtt\Client\ConnectionSettings;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
@@ -27,7 +25,7 @@ class MqttBridge
     /** @var AsyncCloudClient[] Indexed by account email */
     private array $cloudClients = [];
 
-    private ?MqttClient $brokerClient = null;
+    private ?AsyncMqttClient $localBrokerClient = null;
     private DeviceStateManager $stateManager;
     private TopicTranslator $topicTranslator;
     private PayloadTransformer $payloadTransformer;
@@ -256,6 +254,8 @@ class MqttBridge
         $host = $this->config['mosquitto']['host'];
         $port = $this->config['mosquitto']['port'];
         $clientId = $this->config['mosquitto']['client_id'] ?? 'fossibot_bridge';
+        $username = $this->config['mosquitto']['username'] ?? null;
+        $password = $this->config['mosquitto']['password'] ?? null;
 
         $this->logger->info('Connecting to local broker', [
             'host' => $host,
@@ -263,46 +263,59 @@ class MqttBridge
             'attempt' => $this->brokerReconnectAttempt + 1
         ]);
 
-        try {
-            $this->brokerClient = new MqttClient($host, $port, $clientId);
+        // Create TCP transport
+        $transport = new TcpTransport(
+            $this->loop,
+            $host,
+            $port,
+            $this->logger
+        );
 
-            $settings = (new ConnectionSettings)
-                ->setKeepAliveInterval(60)
-                ->setUseTls(false)
-                ->setLastWillTopic('fossibot/bridge/status')
-                ->setLastWillMessage('offline')
-                ->setLastWillQualityOfService(1)
-                ->setRetainLastWill(true);
+        // Create AsyncMqttClient with TCP transport
+        $this->localBrokerClient = new AsyncMqttClient(
+            $transport,
+            $this->loop,
+            $this->logger,
+            $clientId,
+            $username,
+            $password
+        );
 
-            if (!empty($this->config['mosquitto']['username'])) {
-                $settings->setUsername($this->config['mosquitto']['username']);
-                $settings->setPassword($this->config['mosquitto']['password']);
-            }
+        // Setup message handler
+        $this->localBrokerClient->on('message', function($topic, $payload) {
+            $this->handleBrokerCommand($topic, $payload);
+        });
 
-            $this->brokerClient->connect($settings, true);
+        // Connect and subscribe
+        $this->localBrokerClient->connect()
+            ->then(function() {
+                $this->logger->info('Connected to local broker');
 
-            // Subscribe to command topics
-            $this->brokerClient->subscribe('fossibot/+/command', function($topic, $payload) {
-                $this->handleBrokerCommand($topic, $payload);
-            }, 1);
+                // Reset reconnect counter on success
+                $this->brokerReconnectAttempt = 0;
 
-            $this->logger->info('Connected to local broker');
-
-            // Reset reconnect counter on success
-            $this->brokerReconnectAttempt = 0;
-
-            // Publish availability for all devices from all connected clients
-            foreach ($this->cloudClients as $client) {
-                if ($client->isConnected()) {
-                    foreach ($client->getDevices() as $device) {
-                        $this->publishAvailability($device->getMqttId(), 'online');
+                // Subscribe to command topics
+                return $this->localBrokerClient->subscribe('fossibot/+/command', 1);
+            })
+            ->then(function() {
+                // Publish availability for all devices from all connected clients
+                foreach ($this->cloudClients as $client) {
+                    if ($client->isConnected()) {
+                        foreach ($client->getDevices() as $device) {
+                            $this->publishAvailability($device->getMqttId(), 'online');
+                        }
                     }
                 }
-            }
 
-        } catch (\Exception $e) {
-            $this->handleBrokerConnectionFailure($e);
-        }
+                // Publish initial bridge status
+                $this->publishBridgeStatus();
+
+                // Start periodic timers
+                $this->startTimers();
+            })
+            ->otherwise(function(\Exception $e) {
+                $this->handleBrokerConnectionFailure($e);
+            });
     }
 
     /**
