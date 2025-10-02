@@ -83,6 +83,23 @@ class MqttBridge
 
                 // Publish initial bridge status
                 $this->publishBridgeStatus();
+
+                // Setup status publish timer (every 60s) - AFTER connections are established
+                $this->loop->addPeriodicTimer(
+                    $this->config['bridge']['status_publish_interval'] ?? 60,
+                    fn() => $this->publishBridgeStatus()
+                );
+
+                // Setup device state polling timer (every 30s) - AFTER connections are established
+                $this->pollingTimer = $this->loop->addPeriodicTimer(
+                    $this->config['bridge']['device_poll_interval'] ?? 30,
+                    fn() => $this->pollDeviceStates()
+                );
+
+                $this->logger->debug('Periodic timers started', [
+                    'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
+                    'polling_interval' => $this->config['bridge']['device_poll_interval'] ?? 30
+                ]);
             },
             function (\Exception $e) {
                 $this->logger->error('A critical error occurred during account connection, shutting down.', [
@@ -92,49 +109,8 @@ class MqttBridge
             }
         );
 
-        // Setup broker message loop (process incoming commands from broker)
-        $this->loop->addPeriodicTimer(0.1, function() {
-            if ($this->brokerClient !== null) {
-                try {
-                    // Process pending messages from local broker (non-blocking)
-                    $this->brokerClient->loop(true);
-                } catch (\Exception $e) {
-                    $this->logger->error('Broker message loop error', [
-                        'error' => $e->getMessage()
-                    ]);
-                }
-            }
-        });
-
-        // Setup broker health check (every 30 seconds)
-        $this->loop->addPeriodicTimer(30, function() {
-            if ($this->brokerClient !== null) {
-                try {
-                    // The loop() call will throw if connection is dead
-                    $this->brokerClient->loop(true);
-                } catch (\Exception $e) {
-                    $this->logger->warning('Broker health check failed, reconnecting', [
-                        'error' => $e->getMessage()
-                    ]);
-
-                    // Trigger reconnect
-                    $this->brokerClient = null;
-                    $this->connectBroker();
-                }
-            }
-        });
-
-        // Setup status publish timer (every 60s)
-        $this->loop->addPeriodicTimer(
-            $this->config['bridge']['status_publish_interval'] ?? 60,
-            fn() => $this->publishBridgeStatus()
-        );
-
-        // Setup device state polling timer (every 30s)
-        $this->pollingTimer = $this->loop->addPeriodicTimer(
-            $this->config['bridge']['device_poll_interval'] ?? 30,
-            fn() => $this->pollDeviceStates()
-        );
+        // NOTE: Removed periodic broker message loop timer - it blocked ReactPHP event loop
+        // The phpMQTT client will process messages via the callback registered in connectBroker()
 
         $this->running = true;
         $this->logger->info('MqttBridge ready, entering event loop');
@@ -482,6 +458,10 @@ class MqttBridge
 
     private function publishBridgeStatus(string $status = 'online'): void
     {
+        $this->logger->debug('Status publish timer fired', [
+            'status' => $status
+        ]);
+
         $devices = [];
 
         foreach ($this->cloudClients as $client) {
@@ -533,6 +513,10 @@ class MqttBridge
      */
     private function pollDeviceStates(): void
     {
+        $this->logger->debug('Polling timer fired', [
+            'cloud_clients' => count($this->cloudClients)
+        ]);
+
         $this->lastPollTime = microtime(true);
 
         foreach ($this->cloudClients as $client) {
@@ -544,8 +528,8 @@ class MqttBridge
                 $mac = $device->getMqttId();
 
                 try {
-                    // Create read settings command
-                    $command = \Fossibot\Commands\ReadRegistersCommand::create();
+                    // Create read settings command (read 80 registers starting from 0)
+                    $command = new \Fossibot\Commands\ReadRegistersCommand(0, 80);
                     $modbusPayload = $this->payloadTransformer->commandToModbus($command);
 
                     // Publish to cloud
