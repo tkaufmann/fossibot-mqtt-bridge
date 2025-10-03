@@ -15,7 +15,8 @@
   },
   "daemon": {
     "log_file": "logs/bridge.log",
-    "log_level": "info"
+    "log_level": "info",
+    "pid_file": "bridge.pid"
   },
   "health": {
     "enabled": true,
