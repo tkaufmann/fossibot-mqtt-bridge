@@ -60,6 +60,10 @@ class AsyncCloudClient extends EventEmitter
     // HTTP Browser (must persist to prevent GC cleanup during async requests)
     private ?\React\Http\Browser $browser = null;
 
+    // Token & Device Cache
+    private ?\Fossibot\Cache\TokenCache $tokenCache = null;
+    private ?\Fossibot\Cache\DeviceCache $deviceCache = null;
+
     public function __construct(
         string $email,
         string $password,
@@ -71,6 +75,22 @@ class AsyncCloudClient extends EventEmitter
         $this->loop = $loop;
         $this->logger = $logger ?? new NullLogger();
         $this->deviceId = $this->generateDeviceId();
+    }
+
+    /**
+     * Set token cache (optional).
+     */
+    public function setTokenCache(\Fossibot\Cache\TokenCache $cache): void
+    {
+        $this->tokenCache = $cache;
+    }
+
+    /**
+     * Set device cache (optional).
+     */
+    public function setDeviceCache(\Fossibot\Cache\DeviceCache $cache): void
+    {
+        $this->deviceCache = $cache;
     }
 
     /**
@@ -448,6 +468,20 @@ class AsyncCloudClient extends EventEmitter
             $this->connected = false;
             $this->emit('disconnect');
 
+            // Check if tokens expired during runtime
+            if (!$this->isAuthenticated()) {
+                $this->logger->warning('Tokens expired during runtime, invalidating cache', [
+                    'email' => $this->email
+                ]);
+
+                $this->clearAuthTokens();
+
+                // Invalidate cached tokens to force fresh auth
+                if ($this->tokenCache !== null) {
+                    $this->tokenCache->invalidate($this->email);
+                }
+            }
+
             // Auto-reconnect if not manually disconnected
             if ($this->running && !$this->reconnecting) {
                 $this->loop->futureTick(function() {
@@ -471,33 +505,141 @@ class AsyncCloudClient extends EventEmitter
             'email' => $this->email
         ]);
 
+        // Try cache first (if TokenCache configured)
+        if ($this->tokenCache !== null) {
+            $s1Token = $this->tokenCache->getCachedToken($this->email, 's1_anonymous');
+            $s2Token = $this->tokenCache->getCachedToken($this->email, 's2_login');
+            $s3Token = $this->tokenCache->getCachedToken($this->email, 's3_mqtt');
+
+            // Check which stages can be skipped
+            $skipS1 = $s1Token !== null;
+            $skipS2 = $s2Token !== null;
+            $skipS3 = $s3Token !== null;
+
+            if ($skipS1 && $skipS2 && $skipS3) {
+                // Full cache hit - use all cached tokens
+                $this->logger->info('Using fully cached authentication tokens', [
+                    'email' => $this->email
+                ]);
+                $this->anonymousToken = $s1Token->token;
+                $this->loginToken = $s2Token->token;
+                $this->mqttToken = $s3Token->token;
+                $this->loginTokenExpiresAt = $s2Token->expiresAt;
+                $this->mqttTokenExpiresAt = $s3Token->expiresAt;
+                return \React\Promise\resolve(null);
+            }
+
+            // Partial cache hit - log what we're skipping
+            if ($skipS2) {
+                $this->logger->info('Stage 2 (Login) cached, skipping', [
+                    'email' => $this->email,
+                    'ttl_remaining' => $s2Token->getTtlRemaining()
+                ]);
+            }
+        }
+
         // Create Browser only once and store as class property to prevent GC cleanup
         if ($this->browser === null) {
             $this->browser = $this->createBrowser();
         }
 
-        // Stage 1: Anonymous Token
-        return $this->stage1_getAnonymousToken($this->browser)
-            ->then(function(string $anonToken) {
-                $this->anonymousToken = $anonToken;
-                $this->logger->info('Stage 1 completed: Anonymous token acquired');
+        // Partial or full cache miss - execute auth stages
+        $promise = \React\Promise\resolve(null);
 
-                // Stage 2: Login Token
-                return $this->stage2_login($this->browser, $anonToken);
-            })
-            ->then(function(string $loginToken) {
+        // Stage 1: Anonymous Token (always fetch fresh, TTL too short)
+        $promise = $promise->then(function() {
+            $this->logger->debug('Fetching fresh Stage 1 token');
+            return $this->stage1_getAnonymousToken($this->browser);
+        })->then(function(string $anonToken) {
+            $this->anonymousToken = $anonToken;
+            $this->logger->info('Stage 1 completed: Anonymous token acquired');
+
+            // Cache S1 token (even though TTL is short, useful for quick restarts)
+            if ($this->tokenCache !== null) {
+                $this->tokenCache->saveToken(
+                    $this->email,
+                    's1_anonymous',
+                    $anonToken,
+                    time() + 540 // 9 minutes (10min TTL - 1min safety)
+                );
+            }
+            return null;
+        });
+
+        // Stage 2: Login Token (skip if cached)
+        if ($this->tokenCache === null || $this->tokenCache->getCachedToken($this->email, 's2_login') === null) {
+            $promise = $promise->then(function() {
+                $this->logger->debug('Fetching fresh Stage 2 token');
+                return $this->stage2_login($this->browser, $this->anonymousToken);
+            })->then(function(string $loginToken) {
                 $this->loginToken = $loginToken;
                 $this->logger->info('Stage 2 completed: Login token acquired');
 
-                // Stage 3: MQTT Token
-                return $this->stage3_getMqttToken($this->browser, $this->anonymousToken, $loginToken);
-            })
-            ->then(function(string $mqttToken) {
+                // Cache S2 token (very long TTL)
+                if ($this->tokenCache !== null) {
+                    // Login token expires in ~14 years, use far future timestamp
+                    $expiresAt = time() + (14 * 365 * 86400); // 14 years
+                    $this->loginTokenExpiresAt = $expiresAt;
+
+                    $this->tokenCache->saveToken(
+                        $this->email,
+                        's2_login',
+                        $loginToken,
+                        $expiresAt
+                    );
+                }
+                return null;
+            });
+        } else {
+            // Use cached S2 token
+            $promise = $promise->then(function() {
+                $cachedS2 = $this->tokenCache->getCachedToken($this->email, 's2_login');
+                $this->loginToken = $cachedS2->token;
+                $this->loginTokenExpiresAt = $cachedS2->expiresAt;
+                $this->logger->info('Using cached Stage 2 token', [
+                    'ttl_remaining' => $cachedS2->getTtlRemaining()
+                ]);
+                return null;
+            });
+        }
+
+        // Stage 3: MQTT Token (always fetch fresh if not cached)
+        if ($this->tokenCache === null || $this->tokenCache->getCachedToken($this->email, 's3_mqtt') === null) {
+            $promise = $promise->then(function() {
+                $this->logger->debug('Fetching fresh Stage 3 token');
+                return $this->stage3_getMqttToken($this->browser, $this->anonymousToken, $this->loginToken);
+            })->then(function(string $mqttToken) {
                 $this->mqttToken = $mqttToken;
                 $this->logger->info('Stage 3 completed: MQTT token acquired', [
                     'expires_at' => $this->mqttTokenExpiresAt ? date('Y-m-d H:i:s', $this->mqttTokenExpiresAt) : 'unknown'
                 ]);
+
+                // Cache S3 token
+                if ($this->tokenCache !== null && $this->mqttTokenExpiresAt !== null) {
+                    $this->tokenCache->saveToken(
+                        $this->email,
+                        's3_mqtt',
+                        $mqttToken,
+                        $this->mqttTokenExpiresAt
+                    );
+                }
+                return null;
             });
+        } else {
+            // Use cached S3 token
+            $promise = $promise->then(function() {
+                $cachedS3 = $this->tokenCache->getCachedToken($this->email, 's3_mqtt');
+                $this->mqttToken = $cachedS3->token;
+                $this->mqttTokenExpiresAt = $cachedS3->expiresAt;
+                $this->logger->info('Using cached Stage 3 token', [
+                    'ttl_remaining' => $cachedS3->getTtlRemaining(),
+                    'expires_at' => date('Y-m-d H:i:s', $cachedS3->expiresAt)
+                ]);
+                return null;
+            });
+        }
+
+        return $promise;
     }
 
     /**
@@ -510,6 +652,26 @@ class AsyncCloudClient extends EventEmitter
      */
     private function discoverDevices(): PromiseInterface
     {
+        // Try device cache first
+        if ($this->deviceCache !== null) {
+            $cachedDevices = $this->deviceCache->getDevices($this->email);
+
+            if ($cachedDevices !== null) {
+                $this->logger->info('Using cached device list', [
+                    'email' => $this->email,
+                    'device_count' => count($cachedDevices),
+                    'cache_age' => $this->deviceCache->getAge($this->email)
+                ]);
+                $this->devices = $cachedDevices;
+                return \React\Promise\resolve(null);
+            }
+        }
+
+        // Cache miss - fetch from API
+        $this->logger->info('Fetching fresh device list from API', [
+            'email' => $this->email
+        ]);
+
         // Reuse existing browser instance (created in authenticate())
         if ($this->browser === null) {
             $this->browser = $this->createBrowser();
@@ -518,8 +680,34 @@ class AsyncCloudClient extends EventEmitter
         return $this->fetchDevices($this->browser, $this->anonymousToken, $this->loginToken)
             ->then(function(array $devices) {
                 $this->devices = $devices;
+
+                // Cache device list
+                if ($this->deviceCache !== null) {
+                    $this->deviceCache->saveDevices($this->email, $devices);
+                }
+
                 return null;
             });
+    }
+
+    /**
+     * Force refresh device list (invalidates cache).
+     *
+     * @return PromiseInterface Resolves when devices refreshed
+     */
+    public function refreshDeviceList(): PromiseInterface
+    {
+        $this->logger->info('Force refreshing device list', [
+            'email' => $this->email
+        ]);
+
+        // Invalidate cache
+        if ($this->deviceCache !== null) {
+            $this->deviceCache->invalidate($this->email);
+        }
+
+        // Fetch fresh
+        return $this->discoverDevices();
     }
 
     private function subscribeToDeviceTopics(): PromiseInterface
