@@ -12,6 +12,9 @@ ini_set('display_errors', '1');
 // Autoloader
 require __DIR__ . '/../vendor/autoload.php';
 
+// Project root directory (for resolving relative paths in development)
+define('PROJECT_ROOT', dirname(__DIR__));
+
 use Fossibot\Bridge\MqttBridge;
 use React\EventLoop\Loop;
 use Monolog\Logger;
@@ -205,6 +208,36 @@ try {
 }
 
 // =============================================================================
+// PATH RESOLUTION
+// =============================================================================
+
+/**
+ * Resolve relative paths to absolute paths using PROJECT_ROOT.
+ *
+ * Absolute paths are returned unchanged.
+ * Relative paths are resolved relative to PROJECT_ROOT (development mode).
+ * Production configs should always use absolute paths.
+ *
+ * @param string $path Path from config (may be relative or absolute)
+ * @return string Absolute path
+ */
+function resolveProjectPath(string $path): string
+{
+    // Absolute paths are returned as-is
+    if (str_starts_with($path, '/')) {
+        return $path;
+    }
+
+    // Relative paths are resolved relative to PROJECT_ROOT
+    return PROJECT_ROOT . '/' . $path;
+}
+
+// Resolve relative paths in config (before passing to MqttBridge)
+if (isset($config['cache']['directory'])) {
+    $config['cache']['directory'] = resolveProjectPath($config['cache']['directory']);
+}
+
+// =============================================================================
 // PID FILE MANAGEMENT
 // =============================================================================
 
@@ -270,14 +303,7 @@ function getPidFilePath(array $config): string
 {
     // Check config for custom path
     if (isset($config['daemon']['pid_file'])) {
-        $pidFile = $config['daemon']['pid_file'];
-
-        // Expand relative paths relative to project root (one level up from daemon/)
-        if (!str_starts_with($pidFile, '/')) {
-            $pidFile = dirname(__DIR__) . '/' . $pidFile;
-        }
-
-        return $pidFile;
+        return resolveProjectPath($config['daemon']['pid_file']);
     }
 
     // Default: /var/run/fossibot/bridge.pid (production) or project-root/bridge.pid (dev)
@@ -285,7 +311,7 @@ function getPidFilePath(array $config): string
         return '/var/run/fossibot/bridge.pid';
     }
 
-    return dirname(__DIR__) . '/bridge.pid';
+    return PROJECT_ROOT . '/bridge.pid';
 }
 
 // Check PID file before starting
@@ -326,7 +352,7 @@ function createLogger(array $config): Logger
     $logger->pushHandler($consoleHandler);
 
     // File handler (rotating, 7 days retention)
-    $logFile = $config['daemon']['log_file'];
+    $logFile = resolveProjectPath($config['daemon']['log_file']);
 
     // Create log directory if needed
     $logDir = dirname($logFile);
