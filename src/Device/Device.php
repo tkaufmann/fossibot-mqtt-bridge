@@ -117,4 +117,32 @@ class Device
             createdAt: $data['created_at'] ?? ''
         );
     }
+
+    /**
+     * Convert Device to array for serialization.
+     */
+    public function toArray(): array
+    {
+        return [
+            'deviceid' => $this->productId,
+            'name' => $this->deviceName,
+            'mac' => $this->macAddress,
+            'devicetype' => $this->model
+        ];
+    }
+
+    /**
+     * Create Device from array (deserialization).
+     */
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            macAddress: $data['mac'],
+            deviceName: $data['name'],
+            productId: $data['deviceid'],
+            model: $data['devicetype'],
+            onlineStatus: 0, // Unknown after deserialization
+            createdAt: ''    // Unknown after deserialization
+        );
+    }
 }
