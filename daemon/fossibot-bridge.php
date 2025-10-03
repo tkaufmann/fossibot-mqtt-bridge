@@ -205,6 +205,99 @@ try {
 }
 
 // =============================================================================
+// PID FILE MANAGEMENT
+// =============================================================================
+
+/**
+ * Check and create PID file.
+ *
+ * Prevents multiple bridge instances from running simultaneously.
+ * Handles stale PID files from crashed processes.
+ *
+ * @param string $pidFile Path to PID file
+ * @throws RuntimeException if another instance is running
+ */
+function checkAndCreatePidFile(string $pidFile): void
+{
+    // Create directory if needed
+    $pidDir = dirname($pidFile);
+    if (!is_dir($pidDir)) {
+        mkdir($pidDir, 0755, true);
+    }
+
+    // Check for existing PID file
+    if (file_exists($pidFile)) {
+        $oldPid = (int)trim(file_get_contents($pidFile));
+
+        // Check if process is still running
+        if (posix_kill($oldPid, 0)) {
+            // Process exists
+            throw new \RuntimeException(
+                "Bridge is already running with PID $oldPid\n" .
+                "PID file: $pidFile\n" .
+                "Use 'fossibot-bridge-ctl stop' to stop it first."
+            );
+        }
+
+        // Stale PID file - remove it
+        echo "⚠️  Stale PID file found (process $oldPid not running), removing\n";
+        unlink($pidFile);
+    }
+
+    // Write our PID
+    $currentPid = getmypid();
+    file_put_contents($pidFile, $currentPid);
+
+    echo "✅ PID file created: $pidFile (PID: $currentPid)\n";
+
+    // Register shutdown handler to remove PID file
+    register_shutdown_function(function() use ($pidFile, $currentPid) {
+        if (file_exists($pidFile)) {
+            $filePid = (int)trim(file_get_contents($pidFile));
+
+            // Only remove if it's still our PID (not overwritten)
+            if ($filePid === $currentPid) {
+                unlink($pidFile);
+            }
+        }
+    });
+}
+
+/**
+ * Get PID file path from config or use default.
+ */
+function getPidFilePath(array $config): string
+{
+    // Check config for custom path
+    if (isset($config['daemon']['pid_file'])) {
+        $pidFile = $config['daemon']['pid_file'];
+
+        // Expand relative paths relative to script directory
+        if (!str_starts_with($pidFile, '/')) {
+            $pidFile = __DIR__ . '/' . $pidFile;
+        }
+
+        return $pidFile;
+    }
+
+    // Default: /var/run/fossibot/bridge.pid (production) or ./bridge.pid (dev)
+    if (is_dir('/var/run/fossibot')) {
+        return '/var/run/fossibot/bridge.pid';
+    }
+
+    return __DIR__ . '/bridge.pid';
+}
+
+// Check PID file before starting
+try {
+    $pidFile = getPidFilePath($config);
+    checkAndCreatePidFile($pidFile);
+} catch (\RuntimeException $e) {
+    echo "\n❌ " . $e->getMessage() . "\n";
+    exit(1);
+}
+
+// =============================================================================
 // LOGGER SETUP
 // =============================================================================
 
