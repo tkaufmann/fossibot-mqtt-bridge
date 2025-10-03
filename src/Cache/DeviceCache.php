@@ -94,7 +94,7 @@ class DeviceCache
 
         // Deserialize Device objects
         return array_map(
-            fn($deviceData) => \Fossibot\Device\Device::fromArray($deviceData),
+            fn($deviceData) => \Fossibot\ValueObjects\Device::fromArray($deviceData),
             $data['devices']
         );
     }
