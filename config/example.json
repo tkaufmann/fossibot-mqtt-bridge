@@ -17,6 +17,12 @@
     "log_file": "logs/bridge.log",
     "log_level": "info"
   },
+  "cache": {
+    "directory": "/var/lib/fossibot",
+    "token_ttl_safety_margin": 300,
+    "device_list_ttl": 86400,
+    "device_refresh_interval": 86400
+  },
   "bridge": {
     "status_publish_interval": 60,
     "device_poll_interval": 30,
