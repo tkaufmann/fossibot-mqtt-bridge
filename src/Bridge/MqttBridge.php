@@ -30,6 +30,10 @@ class MqttBridge
     private TopicTranslator $topicTranslator;
     private PayloadTransformer $payloadTransformer;
 
+    // Cache instances (shared across all cloud clients)
+    private ?\Fossibot\Cache\TokenCache $tokenCache = null;
+    private ?\Fossibot\Cache\DeviceCache $deviceCache = null;
+
     private bool $running = false;
     private int $startTime = 0;
 
@@ -61,6 +65,31 @@ class MqttBridge
         $this->stateManager = new DeviceStateManager();
         $this->topicTranslator = new TopicTranslator();
         $this->payloadTransformer = new PayloadTransformer();
+
+        // Initialize caches if configured
+        if (isset($this->config['cache'])) {
+            $cacheDir = $this->config['cache']['directory'] ?? '/var/lib/fossibot';
+
+            // Ensure cache directory exists
+            if (!is_dir($cacheDir)) {
+                mkdir($cacheDir, 0700, true);
+                $this->logger->info('Created cache directory', ['path' => $cacheDir]);
+            }
+
+            // Token cache
+            $tokenTtlSafety = $this->config['cache']['token_ttl_safety_margin'] ?? 300;
+            $this->tokenCache = new \Fossibot\Cache\TokenCache($cacheDir, $tokenTtlSafety, $this->logger);
+
+            // Device cache
+            $deviceTtl = $this->config['cache']['device_list_ttl'] ?? 86400;
+            $this->deviceCache = new \Fossibot\Cache\DeviceCache($cacheDir, $deviceTtl, $this->logger);
+
+            $this->logger->info('Cache initialized', [
+                'directory' => $cacheDir,
+                'token_safety_margin' => $tokenTtlSafety,
+                'device_ttl' => $deviceTtl
+            ]);
+        }
     }
 
     /**
@@ -96,6 +125,31 @@ class MqttBridge
 
         $this->running = true;
         $this->logger->info('MqttBridge ready, entering event loop');
+
+        // Periodic device list refresh (24h)
+        if (isset($this->config['cache']['device_refresh_interval'])) {
+            $refreshInterval = $this->config['cache']['device_refresh_interval'];
+            $this->loop->addPeriodicTimer($refreshInterval, function() {
+                $this->logger->info('Periodic device list refresh triggered');
+
+                foreach ($this->cloudClients as $client) {
+                    $client->refreshDeviceList()->then(
+                        function() {
+                            $this->logger->debug('Device list refresh completed');
+                        },
+                        function(\Exception $e) {
+                            $this->logger->error('Device list refresh failed', [
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    );
+                }
+            });
+
+            $this->logger->info('Periodic device refresh enabled', [
+                'interval' => $refreshInterval . 's'
+            ]);
+        }
 
         // Run event loop (blocks here)
         $this->loop->run();
@@ -180,6 +234,14 @@ class MqttBridge
             $this->logger->info('Initializing account', ['email' => $email]);
 
             $client = new AsyncCloudClient($email, $password, $this->loop, $this->logger);
+
+            // Set cache instances (if configured)
+            if ($this->tokenCache !== null) {
+                $client->setTokenCache($this->tokenCache);
+            }
+            if ($this->deviceCache !== null) {
+                $client->setDeviceCache($this->deviceCache);
+            }
 
             // Register event handlers
             $this->registerCloudClientEvents($client, $email);
