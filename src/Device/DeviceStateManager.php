@@ -31,11 +31,12 @@ class DeviceStateManager
      * @param string $macAddress Device MAC address
      * @param array $registers Modbus register array
      * @param string|null $sourceTopic MQTT topic that triggered this update
+     * @param bool $wasCommandTriggered Was this update triggered by a command we sent?
      */
-    public function updateDeviceState(string $macAddress, array $registers, ?string $sourceTopic = null): void
+    public function updateDeviceState(string $macAddress, array $registers, ?string $sourceTopic = null, bool $wasCommandTriggered = false): void
     {
         $state = $this->getDeviceState($macAddress);
-        $state->updateFromRegisters($registers, $sourceTopic);
+        $state->updateFromRegisters($registers, $sourceTopic, $wasCommandTriggered);
 
         // Trigger callbacks for this device
         if (isset($this->callbacks[$macAddress])) {

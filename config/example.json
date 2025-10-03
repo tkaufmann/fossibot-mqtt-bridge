@@ -19,7 +19,12 @@
   },
   "bridge": {
     "status_publish_interval": 60,
+    "device_poll_interval": 30,
     "reconnect_delay_min": 5,
     "reconnect_delay_max": 60
+  },
+  "debug": {
+    "log_raw_registers": false,
+    "log_update_source": false
   }
 }

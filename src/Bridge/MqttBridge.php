@@ -45,6 +45,10 @@ class MqttBridge
     private ?\React\EventLoop\TimerInterface $pollingTimer = null;
     private float $lastPollTime = 0;
 
+    // Command tracking for spontaneous vs. triggered /client/04 detection
+    /** @var array<string, float> MAC => timestamp of last command sent */
+    private array $lastCommandSent = [];
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -370,8 +374,8 @@ class MqttBridge
                 return;
             }
 
-            // DEBUG: Log raw Register 41 and 56 values from each topic
-            if (isset($registers[41]) || isset($registers[56])) {
+            // Optional: Log raw Register 41 and 56 values (configurable via LOG_RAW_REGISTERS)
+            if (($this->config['debug']['log_raw_registers'] ?? false) && (isset($registers[41]) || isset($registers[56]))) {
                 $topicType = str_contains($topic, '/client/04') ? 'IMMEDIATE' : 'POLLING';
                 $logData = ['topic' => $topic];
 
@@ -389,8 +393,16 @@ class MqttBridge
                 $this->logger->info("RAW Registers from {$topicType}", $logData);
             }
 
-            // Update state (pass topic for priority handling)
-            $this->stateManager->updateDeviceState($mac, $registers, $topic);
+            // Detect if this is a command-triggered update (within 3s of last command)
+            $wasCommandTriggered = false;
+            $isImmediateResponse = str_contains($topic, '/client/04');
+            if ($isImmediateResponse && isset($this->lastCommandSent[$mac])) {
+                $timeSinceCommand = microtime(true) - $this->lastCommandSent[$mac];
+                $wasCommandTriggered = $timeSinceCommand < 3.0; // 3 second window
+            }
+
+            // Update state (pass topic and command-triggered flag)
+            $this->stateManager->updateDeviceState($mac, $registers, $topic, $wasCommandTriggered);
 
             // Get state and convert to JSON
             $state = $this->stateManager->getDeviceState($mac);
@@ -400,7 +412,8 @@ class MqttBridge
             $brokerTopic = $this->topicTranslator->cloudToBroker($topic);
             $this->localBrokerClient->publish($brokerTopic, $json, 1);
 
-            $this->logger->info('Device state updated', [
+            // Enhanced logging with source tracking
+            $logData = [
                 'mac' => $mac,
                 'soc' => $state->soc . '%',
                 'input' => $state->inputWatts . 'W',
@@ -418,7 +431,15 @@ class MqttBridge
                     'ac_limit' => $state->acChargingUpperLimit . '%'
                 ],
                 'timestamp' => $state->lastFullUpdate->format('H:i:s')
-            ]);
+            ];
+
+            // Optional: Add source information for /client/04 updates (configurable via LOG_UPDATE_SOURCE)
+            if ($isImmediateResponse && ($this->config['debug']['log_update_source'] ?? false)) {
+                $logData['source'] = $state->lastUpdateSource ?? 'unknown';
+                $logData['update_type'] = $wasCommandTriggered ? 'COMMAND-TRIGGERED' : 'SPONTANEOUS';
+            }
+
+            $this->logger->info('Device state updated', $logData);
 
         } catch (\Exception $e) {
             $this->logger->error('Error handling cloud message', [
@@ -453,6 +474,9 @@ class MqttBridge
             // Publish to cloud
             $cloudTopic = $this->topicTranslator->brokerToCloud($topic);
             $client->publish($cloudTopic, $modbusPayload);
+
+            // Track command timestamp for spontaneous vs. triggered detection
+            $this->lastCommandSent[$mac] = microtime(true);
 
             $this->logger->info('Command forwarded to cloud', [
                 'mac' => $mac,

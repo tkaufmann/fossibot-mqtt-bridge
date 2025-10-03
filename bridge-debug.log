@@ -1,0 +1,249 @@
+Loading config from: /Users/tim/Code/fossibot-php2/config/config.json
+Validating config...
+✅ Config valid
+  Accounts: 1
+  Mosquitto: localhost:1883
+  Log level: debug
+✅ Logger initialized
+
+[2025-10-02 23:31:23] fossibot_bridge.INFO: Fossibot MQTT Bridge starting {"version":"2.0.0","php_version":"8.4.12","config_file":"/Users/tim/Code/fossibot-php2/config/config.json","pid":70710}
+Starting bridge (press Ctrl+C to stop)...
+═══════════════════════════════════════
+
+[2025-10-02 23:31:23] fossibot_bridge.INFO: MqttBridge starting... 
+[2025-10-02 23:31:23] fossibot_bridge.INFO: Initializing account {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:23] fossibot_bridge.INFO: AsyncCloudClient connecting {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:23] fossibot_bridge.INFO: Starting async authentication {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: createBrowser: Starting {"loop_class":"React\\EventLoop\\StreamSelectLoop"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: createBrowser: DNS resolver created {"dns_class":"React\\Dns\\Resolver\\Resolver"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: createBrowser: Socket connector created {"connector_class":"React\\Socket\\Connector"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: createBrowser: Browser created {"browser_class":"React\\Http\\Browser"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: Stage 1: Requesting anonymous token 
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: Stage 1: About to call $browser->post() {"url":"https://api.next.bspapp.com/client","browser_class":"React\\Http\\Browser"}
+[2025-10-02 23:31:23] fossibot_bridge.DEBUG: Stage 1: $browser->post() returned {"promise_class":"React\\Promise\\Promise"}
+[2025-10-02 23:31:23] fossibot_bridge.INFO: Initialized accounts {"count":1}
+[2025-10-02 23:31:23] fossibot_bridge.INFO: MqttBridge ready, entering event loop 
+[2025-10-02 23:31:25] fossibot_bridge.DEBUG: Stage 1: Then handler called (success) {"status":200}
+[2025-10-02 23:31:25] fossibot_bridge.DEBUG: Stage 1 completed {"token_length":36,"expires_in":600}
+[2025-10-02 23:31:25] fossibot_bridge.INFO: Stage 1 completed: Anonymous token acquired 
+[2025-10-02 23:31:25] fossibot_bridge.DEBUG: Stage 2: Logging in {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:25] fossibot_bridge.DEBUG: Stage 2 completed {"token_length":207,"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:25] fossibot_bridge.INFO: Stage 2 completed: Login token acquired 
+[2025-10-02 23:31:25] fossibot_bridge.DEBUG: Stage 3: Requesting MQTT token 
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: Stage 3 completed {"token_length":172,"expires_at":"2025-10-05 23:31:26"}
+[2025-10-02 23:31:26] fossibot_bridge.INFO: Stage 3 completed: MQTT token acquired {"expires_at":"2025-10-05 23:31:26"}
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: Fetching device list 
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: Device list API response {"status":200,"has_data":true,"response_keys":["success","data","header"],"full_response":{"success":true,"data":{"hasMore":false,"total":1,"rows":[{"_id":"686b0edb3d029cca229f5e9d","device_id":"7C:2C:67:AB:5F:0E","timezoneOffset":120,"mqtt_state":1,"energy_price":1,"energy_price_unit":"$","productInfo":{"_id":"66bdbc320d2b313577dd5600","name":"POWER-0084","brand_id":"658d42c309664c1c8d548f95","uuid":"00008400-0000-1000-8000-00805F9B34FB","service_id":"0000A002-0000-1000-8000-00805F9B34FB","write_id":"0000C304-0000-1000-8000-00805F9B34FB","notify_id":"0000C305-0000-1000-8000-00805F9B34FB","product_imgs":["https://mp-6c382a98-49b8-40ba-b761-645d83e8ee74.cdn.bspapp.com/2025/05/08/73166917-19788323-0.png"],"protocol_version":0,"product_name":"F2400-B","brandInfo":{"_id":"658d42c309664c1c8d548f95","name":"省油灯(中性通用)","logo":"https://mp-73cda83b-496a-48c3-bc62-c0233fcbc5cb.cdn.bspapp.com/2025/06/30/55631723-27748178-ABOK.png","email":"feedback@sydpower.com","is_rectangle":false,"is_logo":false,"is_name":false},"page_path":"/pages/device/portable-power-station/info","modbus_address":17,"modbus_count":80},"device_name":"F2400-B","device_img_index":0,"is_master":1}],"code":0,"msg":"查询成功","pagination":{"pageIndex":1,"pageSize":100000000},"getCount":false},"header":{"x-serverless-request-id":"ac1cd3981759447886469131164","x-serverless-runtime-version":"2.1.3","x-fc-code-checksum":"3373688905125190371","access-control-expose-headers":"Date,x-fc-request-id,x-fc-error-type,x-fc-code-checksum,x-fc-invocation-duration,x-fc-max-memory-usage,x-fc-log-result,x-fc-invocation-code-version,x-fc-instance-id","x-fc-invocation-service-version":"LATEST","x-fc-instance-id":"c-68df03f2-1838fdc2-7026967db740","content-length":"1323","date":"Thu, 02 Oct 2025 23:31:26 GMT","x-fc-request-id":"1-68df0b4e-1830919f-1ecd08d174ae","x-fc-max-memory-usage":"63.12","x-fc-invocation-duration":"60","content-type":"application/octet-stream","x-serverless-http-status":"200"}}}
+[2025-10-02 23:31:26] fossibot_bridge.INFO: Devices discovered via HTTP API {"count":1}
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: Connecting MQTT client via WebSocket transport 
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: AsyncMqttClient connecting {"client_id":"fossibot_async_68df0b4ea636a","has_auth":true}
+[2025-10-02 23:31:26] fossibot_bridge.DEBUG: Connecting WebSocket {"url":"ws://mqtt.sydpower.com:8083/mqtt","subprotocols":["mqtt"]}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: WebSocket connected with MQTT subprotocol 
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Sending MQTT CONNECT packet {"packet_length":227,"client_id":"fossibot_async_68df0b4ea636a"}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: MQTT connection accepted 
+[2025-10-02 23:31:27] fossibot_bridge.INFO: AsyncMqttClient connected successfully 
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Keep-alive timer started {"interval":24.0,"keepAlive":30}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribing to topic {"topic":"7C2C67AB5F0E/device/response/client/+"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribed to topic {"topic":"7C2C67AB5F0E/device/response/client/+","packet_id":1,"qos":0}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribing to topic {"topic":"7C2C67AB5F0E/device/response/state"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribed to topic {"topic":"7C2C67AB5F0E/device/response/state","packet_id":2,"qos":0}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribed to device topics {"device_count":1}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: Cloud client connected {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Skipping availability publish - broker not connected yet {"mac":"7C2C67AB5F0E","status":"online"}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: AsyncCloudClient connected successfully 
+[2025-10-02 23:31:27] fossibot_bridge.INFO: Account connected {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: All accounts connected successfully, proceeding with broker connection. 
+[2025-10-02 23:31:27] fossibot_bridge.INFO: Connecting to local broker {"host":"localhost","port":1883,"attempt":1}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: AsyncMqttClient connecting {"client_id":"fossibot_bridge","has_auth":false}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Connecting TCP socket {"host":"localhost","port":1883,"uri":"tcp://localhost:1883"}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: TCP socket connected {"remote_address":"tcp://[::1]:1883"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Sending MQTT CONNECT packet {"packet_length":29,"client_id":"fossibot_bridge"}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: MQTT connection accepted 
+[2025-10-02 23:31:27] fossibot_bridge.INFO: AsyncMqttClient connected successfully 
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Keep-alive timer started {"interval":24.0,"keepAlive":30}
+[2025-10-02 23:31:27] fossibot_bridge.INFO: Connected to local broker 
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscribed to topic {"topic":"fossibot/+/command","packet_id":1,"qos":1}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/availability","payload_length":6,"packet_id":2,"qos":1}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Published availability {"mac":"7C2C67AB5F0E","status":"online"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Status publish timer fired {"status":"online"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/bridge/status","payload_length":304,"packet_id":3,"qos":1}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Published bridge status 
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Periodic timers started {"status_interval":60,"polling_interval":30}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Subscription confirmed {"topic":"fossibot/+/command"}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":2}
+[2025-10-02 23:31:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":3}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Subscription confirmed {"topic":"7C2C67AB5F0E/device/response/client/+"}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Subscription confirmed {"topic":"7C2C67AB5F0E/device/response/state"}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/04"}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":239,"packet_id":4,"qos":1}
+[2025-10-02 23:31:28] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"0A","discharge_limit":"0%","ac_limit":"0%"},"timestamp":"23:31:28"}
+[2025-10-02 23:31:28] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":4}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/04"}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":239,"packet_id":5,"qos":1}
+[2025-10-02 23:31:46] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"1W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"1A","discharge_limit":"0%","ac_limit":"0%"},"timestamp":"23:31:46"}
+[2025-10-02 23:31:46] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":5}
+[2025-10-02 23:31:51] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:31:51] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:31:51] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:31:51] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:31:57] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:31:57] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:31:57] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":3,"qos":1}
+[2025-10-02 23:31:57] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:31:57] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":3}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":6,"qos":1}
+[2025-10-02 23:31:58] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:31:58"}
+[2025-10-02 23:31:58] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":6}
+[2025-10-02 23:32:15] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:32:15] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:32:15] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:32:15] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Status publish timer fired {"status":"online"}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/bridge/status","payload_length":305,"packet_id":7,"qos":1}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Published bridge status 
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":4,"qos":1}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":7}
+[2025-10-02 23:32:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":4}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":8,"qos":1}
+[2025-10-02 23:32:28] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:32:28"}
+[2025-10-02 23:32:28] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":8}
+[2025-10-02 23:32:39] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:32:39] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:32:39] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:32:39] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:32:57] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:32:57] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:32:57] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":5,"qos":1}
+[2025-10-02 23:32:57] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:32:57] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":5}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":9,"qos":1}
+[2025-10-02 23:32:58] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:32:58"}
+[2025-10-02 23:32:58] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":9}
+[2025-10-02 23:33:03] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:03] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:03] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:03] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Status publish timer fired {"status":"online"}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/bridge/status","payload_length":306,"packet_id":10,"qos":1}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Published bridge status 
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":6,"qos":1}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":10}
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":6}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":11,"qos":1}
+[2025-10-02 23:33:28] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:33:28"}
+[2025-10-02 23:33:28] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":11}
+[2025-10-02 23:33:51] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:51] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:33:51] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:51] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:33:57] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:33:57] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:33:57] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":7,"qos":1}
+[2025-10-02 23:33:57] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:33:57] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":7}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":12,"qos":1}
+[2025-10-02 23:33:58] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:33:58"}
+[2025-10-02 23:33:58] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":12}
+[2025-10-02 23:34:15] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:34:15] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:34:15] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:34:15] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Status publish timer fired {"status":"online"}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/bridge/status","payload_length":306,"packet_id":13,"qos":1}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Published bridge status 
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":8,"qos":1}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":13}
+[2025-10-02 23:34:27] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":8}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":14,"qos":1}
+[2025-10-02 23:34:28] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.5%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:34:28"}
+[2025-10-02 23:34:28] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":14}
+[2025-10-02 23:34:39] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:34:39] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:34:39] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:34:39] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/04","payload_length":168}
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/04"}
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":239,"packet_id":15,"qos":1}
+[2025-10-02 23:34:46] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.4%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"0A","discharge_limit":"0%","ac_limit":"0%"},"timestamp":"23:34:46"}
+[2025-10-02 23:34:46] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":15}
+[2025-10-02 23:34:57] fossibot_bridge.DEBUG: Polling timer fired {"cloud_clients":1}
+[2025-10-02 23:34:57] fossibot_bridge.DEBUG: Publishing to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"qos":1}
+[2025-10-02 23:34:57] fossibot_bridge.DEBUG: Published to topic {"topic":"7C2C67AB5F0E/client/request/data","payload_length":8,"packet_id":9,"qos":1}
+[2025-10-02 23:34:57] fossibot_bridge.DEBUG: Polling device state {"mac":"7C2C67AB5F0E","command":"Read 80 registers starting from 0"}
+[2025-10-02 23:34:57] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":9}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: Message received {"topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: handleCloudMessage called {"account":"tim@timkaufmann.de","topic":"7C2C67AB5F0E/device/response/client/data","payload_length":168}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: MAC extracted {"mac":"7C2C67AB5F0E","topic":"7C2C67AB5F0E/device/response/client/data"}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: Modbus parsed {"register_count":80}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/state","payload_length":241,"packet_id":16,"qos":1}
+[2025-10-02 23:34:58] fossibot_bridge.INFO: Device state updated {"mac":"7C2C67AB5F0E","soc":"93.4%","input":"0W","output":"0W","dc_input":"0W","outputs":{"usb":"ON","ac":"ON","dc":"ON","led":"OFF"},"settings":{"max_charging":"8A","discharge_limit":"25%","ac_limit":"80%"},"timestamp":"23:34:58"}
+[2025-10-02 23:34:58] fossibot_bridge.DEBUG: Received PUBACK {"packet_id":16}
+[2025-10-02 23:35:03] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:35:03] fossibot_bridge.DEBUG: Sending MQTT PINGREQ 
+[2025-10-02 23:35:03] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:35:03] fossibot_bridge.DEBUG: Received PINGRESP 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: Received SIGTERM, shutting down gracefully 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: MqttBridge shutting down... 
+[2025-10-02 23:35:21] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/bridge/status","payload_length":7,"packet_id":17,"qos":1}
+[2025-10-02 23:35:21] fossibot_bridge.DEBUG: Published to topic {"topic":"fossibot/7C2C67AB5F0E/availability","payload_length":7,"packet_id":18,"qos":1}
+[2025-10-02 23:35:21] fossibot_bridge.INFO: Disconnecting cloud client {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:35:21] fossibot_bridge.INFO: AsyncCloudClient disconnecting 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: AsyncMqttClient disconnecting 
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: MQTT connection closed 
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: MQTT client disconnected 
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: Cloud client disconnected {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: MQTT client disconnected 
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: Cloud client disconnected {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: Cloud client disconnected {"email":"tim@timkaufmann.de"}
+[2025-10-02 23:35:21] fossibot_bridge.INFO: AsyncMqttClient disconnecting 
+[2025-10-02 23:35:21] fossibot_bridge.WARNING: MQTT connection closed 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: MqttBridge stopped 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: MqttBridge stopped 
+[2025-10-02 23:35:21] fossibot_bridge.INFO: Bridge stopped 
+
+✅ Bridge stopped

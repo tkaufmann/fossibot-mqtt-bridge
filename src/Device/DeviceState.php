@@ -33,6 +33,10 @@ class DeviceState
     public DateTime $lastOutputUpdate;  // Track when output states were last updated
     public DateTime $lastSocUpdate;     // Track when SoC was last updated
 
+    // Source tracking for /client/04 updates (spontaneous vs. command-triggered)
+    public bool $lastUpdateWasSpontaneous = false;  // Was last /client/04 update spontaneous?
+    public ?string $lastUpdateSource = null;         // Source: 'spontaneous', 'command', or null
+
     public function __construct()
     {
         $this->lastFullUpdate = new DateTime('1970-01-01'); // "never updated"
@@ -45,8 +49,9 @@ class DeviceState
      *
      * @param array $registers Modbus registers (index => value)
      * @param string|null $sourceTopic MQTT topic that triggered this update
+     * @param bool $wasCommandTriggered Was this update triggered by a command we sent?
      */
-    public function updateFromRegisters(array $registers, ?string $sourceTopic = null): void
+    public function updateFromRegisters(array $registers, ?string $sourceTopic = null, bool $wasCommandTriggered = false): void
     {
         // Determine if this is an immediate response topic (/client/04)
         $isImmediateResponse = $sourceTopic !== null && str_contains($sourceTopic, '/client/04');
@@ -58,6 +63,10 @@ class DeviceState
         if (isset($registers[56]) && $isImmediateResponse) {
             $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
             $this->lastSocUpdate = $now;
+
+            // Track if this was spontaneous or command-triggered
+            $this->lastUpdateWasSpontaneous = !$wasCommandTriggered;
+            $this->lastUpdateSource = $wasCommandTriggered ? 'command' : 'spontaneous';
         }
 
         // Power values (assumed live in all topics based on testing)

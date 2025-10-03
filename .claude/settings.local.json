@@ -5,7 +5,8 @@
       "Bash(php:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(daemon/fossibot-bridge.php --version)"
+      "Bash(daemon/fossibot-bridge.php --version)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []
