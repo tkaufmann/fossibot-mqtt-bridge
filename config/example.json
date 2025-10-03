@@ -17,6 +17,10 @@
     "log_file": "logs/bridge.log",
     "log_level": "info"
   },
+  "health": {
+    "enabled": true,
+    "port": 8080
+  },
   "cache": {
     "directory": "/var/lib/fossibot",
     "token_ttl_safety_margin": 300,
