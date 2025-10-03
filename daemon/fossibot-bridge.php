@@ -272,20 +272,20 @@ function getPidFilePath(array $config): string
     if (isset($config['daemon']['pid_file'])) {
         $pidFile = $config['daemon']['pid_file'];
 
-        // Expand relative paths relative to script directory
+        // Expand relative paths relative to project root (one level up from daemon/)
         if (!str_starts_with($pidFile, '/')) {
-            $pidFile = __DIR__ . '/' . $pidFile;
+            $pidFile = dirname(__DIR__) . '/' . $pidFile;
         }
 
         return $pidFile;
     }
 
-    // Default: /var/run/fossibot/bridge.pid (production) or ./bridge.pid (dev)
+    // Default: /var/run/fossibot/bridge.pid (production) or project-root/bridge.pid (dev)
     if (is_dir('/var/run/fossibot')) {
         return '/var/run/fossibot/bridge.pid';
     }
 
-    return __DIR__ . '/bridge.pid';
+    return dirname(__DIR__) . '/bridge.pid';
 }
 
 // Check PID file before starting
