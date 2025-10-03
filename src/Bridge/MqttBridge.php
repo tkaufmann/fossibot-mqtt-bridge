@@ -34,6 +34,10 @@ class MqttBridge
     private ?\Fossibot\Cache\TokenCache $tokenCache = null;
     private ?\Fossibot\Cache\DeviceCache $deviceCache = null;
 
+    // Health monitoring
+    private BridgeMetrics $metrics;
+    private ?HealthCheckServer $healthServer = null;
+
     private bool $running = false;
     private int $startTime = 0;
 
@@ -90,6 +94,9 @@ class MqttBridge
                 'device_ttl' => $deviceTtl
             ]);
         }
+
+        // Initialize health metrics
+        $this->metrics = new BridgeMetrics();
     }
 
     /**
@@ -125,6 +132,20 @@ class MqttBridge
 
         $this->running = true;
         $this->logger->info('MqttBridge ready, entering event loop');
+
+        // Start health check server (if configured)
+        if (isset($this->config['health']['enabled']) && $this->config['health']['enabled']) {
+            $port = $this->config['health']['port'] ?? 8080;
+            $this->healthServer = new HealthCheckServer($this->loop, $this->metrics, $this->logger);
+
+            try {
+                $this->healthServer->start($port);
+            } catch (\Exception $e) {
+                $this->logger->error('Failed to start health server, continuing without it', [
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
 
         // Periodic device list refresh (24h)
         if (isset($this->config['cache']['device_refresh_interval'])) {
@@ -197,6 +218,11 @@ class MqttBridge
             $this->localBrokerClient->disconnect();
         }
 
+        // Stop health server
+        if ($this->healthServer !== null) {
+            $this->healthServer->stop();
+        }
+
         // Stop event loop
         $this->loop->stop();
 
@@ -263,6 +289,18 @@ class MqttBridge
         }
 
         $this->logger->info('Initialized accounts', ['count' => count($this->cloudClients)]);
+
+        // After all clients connected, update metrics
+        $totalAccounts = count($this->config['accounts']);
+        $connectedAccounts = count($this->cloudClients);
+        $this->metrics->setAccountMetrics($totalAccounts, $connectedAccounts);
+
+        // Count total devices
+        $totalDevices = 0;
+        foreach ($this->cloudClients as $client) {
+            $totalDevices += count($client->getDevices());
+        }
+        $this->metrics->setDeviceMetrics($totalDevices, $totalDevices); // Assume all online initially
     }
 
     private function registerCloudClientEvents(AsyncCloudClient $client, string $email): void
@@ -338,6 +376,9 @@ class MqttBridge
 
                 // Reset reconnect counter on success
                 $this->brokerReconnectAttempt = 0;
+
+                // Update broker status in metrics
+                $this->metrics->setLocalBrokerConnected(true);
 
                 // Subscribe to command topics
                 return $this->localBrokerClient->subscribe('fossibot/+/command', 1);
