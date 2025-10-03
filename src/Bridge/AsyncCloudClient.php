@@ -406,6 +406,16 @@ class AsyncCloudClient extends EventEmitter
     }
 
     /**
+     * Check if client is authenticated (has all required tokens).
+     */
+    private function isAuthenticated(): bool
+    {
+        return $this->anonymousToken !== null
+            && $this->loginToken !== null
+            && $this->mqttToken !== null;
+    }
+
+    /**
      * Re-subscribes to all device topics after reconnection.
      */
     private function resubscribeToDevices(): PromiseInterface
