@@ -1,33 +1,89 @@
 [Unit]
 Description=Fossibot MQTT Bridge Daemon
 Documentation=https://github.com/youruser/fossibot-php2
-After=network.target mosquitto.service
-Wants=mosquitto.service
+After=network-online.target mosquitto.service
+Wants=network-online.target mosquitto.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=fossibot
 Group=fossibot
 WorkingDirectory=/opt/fossibot-bridge
+
+# Execution
 ExecStart=/usr/bin/php /opt/fossibot-bridge/daemon/fossibot-bridge.php --config /etc/fossibot/config.json
-Restart=always
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
 RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Logging
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=fossibot-bridge
 
-# Security hardening
+# Automatic directory management (systemd creates/removes these)
+RuntimeDirectory=fossibot
+RuntimeDirectoryMode=0755
+StateDirectory=fossibot
+StateDirectoryMode=0755
+LogsDirectory=fossibot
+LogsDirectoryMode=0755
+
+# Security hardening - Filesystem
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/fossibot
+ReadWritePaths=/var/log/fossibot /var/lib/fossibot
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+
+# Security hardening - Namespacing
+PrivateDevices=true
+PrivateUsers=false
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Security hardening - System calls
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# Security hardening - Network
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=10.0.0.0/8
+IPAddressAllow=172.16.0.0/12
+IPAddressAllow=192.168.0.0/16
 
 # Resource limits
 LimitNOFILE=65536
 MemoryMax=512M
+MemoryHigh=384M
+CPUQuota=200%
+TasksMax=256
 
 # Environment
 Environment="PHP_MEMORY_LIMIT=256M"
+Environment="TZ=Europe/Berlin"
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target
