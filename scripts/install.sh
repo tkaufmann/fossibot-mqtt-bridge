@@ -216,45 +216,10 @@ step_install_systemd_service() {
 
     local service_file="$SYSTEMD_DIR/$SERVICE_NAME.service"
 
-    cat > "$service_file" << EOF
-[Unit]
-Description=Fossibot MQTT Bridge Daemon
-Documentation=https://github.com/youruser/fossibot-php2
-After=network.target mosquitto.service
-Wants=mosquitto.service
-
-[Service]
-Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_GROUP
-WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/php $INSTALL_DIR/daemon/fossibot-bridge.php --config $CONFIG_DIR/config.json
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$LOG_DIR $CACHE_DIR
-RuntimeDirectory=fossibot
-
-# Resource limits
-LimitNOFILE=65536
-MemoryMax=512M
-
-# Environment
-Environment="PHP_MEMORY_LIMIT=256M"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
+    # Copy from project instead of generating
+    cp "$PROJECT_ROOT/daemon/fossibot-bridge.service" "$service_file"
     chmod 644 "$service_file"
-    echo "   ✅ Service file created: $service_file"
+    echo "   ✅ Service file installed: $service_file"
 
     systemctl daemon-reload
     echo "   ✅ systemd reloaded"
