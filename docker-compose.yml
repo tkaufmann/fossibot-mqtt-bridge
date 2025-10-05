@@ -1,0 +1,64 @@
+# ABOUTME: Docker Compose setup for Fossibot MQTT Bridge with Mosquitto
+#
+services:
+  # Mosquitto MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: fossibot-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"    # MQTT
+      - "9001:9001"    # WebSocket (optional)
+    volumes:
+      - ./docker/mosquitto/config:/mosquitto/config:ro
+      - mosquitto-data:/mosquitto/data
+      - ./docker/mosquitto/logs:/mosquitto/log
+    networks:
+      - fossibot-net
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Fossibot Bridge
+  fossibot-bridge:
+    image: timkaufmann/fossibot-bridge:latest
+    # For local build: uncomment below and comment image line
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: fossibot-bridge
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    ports:
+      - "8080:8080"    # Health endpoint
+    volumes:
+      - ./config/config.json:/etc/fossibot/config.json:ro
+      - fossibot-cache:/var/lib/fossibot
+      - ./logs:/var/log/fossibot
+    networks:
+      - fossibot-net
+    environment:
+      - TZ=Europe/Berlin
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo file_get_contents('http://localhost:8080/health') ?: exit(1);"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  fossibot-net:
+    driver: bridge
+
+volumes:
+  mosquitto-data:
+  fossibot-cache:
