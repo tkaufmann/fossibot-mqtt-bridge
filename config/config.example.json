@@ -15,7 +15,7 @@
   "daemon": {
     "log_file": "/var/log/fossibot/bridge.log",
     "log_level": "info",
-    "pid_file": "/var/run/fossibot/bridge.pid"
+    "pid_file": "/var/lib/fossibot/bridge.pid"
   },
   "bridge": {
     "status_publish_interval": 30,
