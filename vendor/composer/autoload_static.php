@@ -19,10 +19,6 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
     );
 
     public static $prefixLengthsPsr4 = array (
-        'W' => 
-        array (
-            'WebSocket\\' => 10,
-        ),
         'S' => 
         array (
             'Symfony\\Polyfill\\Php80\\' => 23,
@@ -46,8 +42,6 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         array (
             'Psr\\Log\\' => 8,
             'Psr\\Http\\Message\\' => 17,
-            'Phrity\\Util\\' => 12,
-            'Phrity\\Net\\' => 11,
             'PhpParser\\' => 10,
             'PhpOption\\' => 10,
         ),
@@ -77,10 +71,6 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
     );
 
     public static $prefixDirsPsr4 = array (
-        'WebSocket\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/textalk/websocket/lib',
-        ),
         'Symfony\\Polyfill\\Php80\\' => 
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-php80',
@@ -141,14 +131,6 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         array (
             0 => __DIR__ . '/..' . '/psr/http-factory/src',
             1 => __DIR__ . '/..' . '/psr/http-message/src',
-        ),
-        'Phrity\\Util\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/phrity/util-errorhandler/src',
-        ),
-        'Phrity\\Net\\' => 
-        array (
-            0 => __DIR__ . '/..' . '/phrity/net-uri/src',
         ),
         'PhpParser\\' => 
         array (
