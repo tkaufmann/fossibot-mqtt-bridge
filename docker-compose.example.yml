@@ -16,7 +16,7 @@ services:
       - "1883:1883"    # MQTT
       - "9001:9001"    # WebSocket (optional)
     volumes:
-      - ./docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - mosquitto-data:/mosquitto/data
       - mosquitto-logs:/mosquitto/log
     networks:
