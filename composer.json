@@ -7,15 +7,14 @@
         "vlucas/phpdotenv": "^5.6",
         "monolog/monolog": "^3.9",
       "ext-curl": "*",
-        "textalk/websocket": "^1.6",
         "react/event-loop": "^1.5",
         "react/socket": "^1.15",
         "react/promise": "^3.2",
         "react/promise-timer": "^1.10",
         "react/dns": "^1.13",
-        "ratchet/pawl": "^0.4",
         "evenement/evenement": "^3.0",
-        "react/http": "^1.11"
+        "react/http": "^1.11",
+        "ratchet/rfc6455": "^0.4.0"
     },
     "autoload": {
         "psr-4": {

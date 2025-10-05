@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "d9c8192d5ee3bbcdb65c0ad0ba6b4253",
+    "content-hash": "58c251989312e424337b266318514117",
     "packages": [
         {
             "name": "evenement/evenement",
@@ -466,113 +466,6 @@
             "time": "2025-08-21T11:53:16+00:00"
         },
         {
-            "name": "phrity/net-uri",
-            "version": "1.3.0",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/sirn-se/phrity-net-uri.git",
-                "reference": "3f458e0c4d1ddc0e218d7a5b9420127c63925f43"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/sirn-se/phrity-net-uri/zipball/3f458e0c4d1ddc0e218d7a5b9420127c63925f43",
-                "reference": "3f458e0c4d1ddc0e218d7a5b9420127c63925f43",
-                "shasum": ""
-            },
-            "require": {
-                "php": "^7.4 | ^8.0",
-                "psr/http-factory": "^1.0",
-                "psr/http-message": "^1.0 | ^2.0"
-            },
-            "require-dev": {
-                "php-coveralls/php-coveralls": "^2.0",
-                "phpunit/phpunit": "^9.0 | ^10.0",
-                "squizlabs/php_codesniffer": "^3.0"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Phrity\\Net\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Sören Jensen",
-                    "email": "sirn@sirn.se",
-                    "homepage": "https://phrity.sirn.se"
-                }
-            ],
-            "description": "PSR-7 Uri and PSR-17 UriFactory implementation",
-            "homepage": "https://phrity.sirn.se/net-uri",
-            "keywords": [
-                "psr-17",
-                "psr-7",
-                "uri",
-                "uri factory"
-            ],
-            "support": {
-                "issues": "https://github.com/sirn-se/phrity-net-uri/issues",
-                "source": "https://github.com/sirn-se/phrity-net-uri/tree/1.3.0"
-            },
-            "time": "2023-08-21T10:33:06+00:00"
-        },
-        {
-            "name": "phrity/util-errorhandler",
-            "version": "1.2.1",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/sirn-se/phrity-util-errorhandler.git",
-                "reference": "9825f15ef9b4a93252ce53ca8962278832d834da"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/sirn-se/phrity-util-errorhandler/zipball/9825f15ef9b4a93252ce53ca8962278832d834da",
-                "reference": "9825f15ef9b4a93252ce53ca8962278832d834da",
-                "shasum": ""
-            },
-            "require": {
-                "php": "^8.1"
-            },
-            "require-dev": {
-                "php-coveralls/php-coveralls": "^2.0",
-                "phpstan/phpstan": "^2.0",
-                "phpunit/phpunit": "^10.0 | ^11.0  | ^12.0",
-                "squizlabs/php_codesniffer": "^3.5"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "Phrity\\Util\\": "src/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Sören Jensen",
-                    "email": "sirn@sirn.se",
-                    "homepage": "https://phrity.sirn.se"
-                }
-            ],
-            "description": "Inline error handler; catch and resolve errors for code block.",
-            "homepage": "https://phrity.sirn.se/util-errorhandler",
-            "keywords": [
-                "error",
-                "warning"
-            ],
-            "support": {
-                "issues": "https://github.com/sirn-se/phrity-util-errorhandler/issues",
-                "source": "https://github.com/sirn-se/phrity-util-errorhandler/tree/1.2.1"
-            },
-            "time": "2025-08-08T09:48:45+00:00"
-        },
-        {
             "name": "psr/http-factory",
             "version": "1.1.0",
             "source": {
@@ -773,60 +666,6 @@
                 "source": "https://github.com/ralouphie/getallheaders/tree/develop"
             },
             "time": "2019-03-08T08:55:37+00:00"
-        },
-        {
-            "name": "ratchet/pawl",
-            "version": "v0.4.3",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/ratchetphp/Pawl.git",
-                "reference": "2c582373c78271de32cb04c755c4c0db7e09c9c0"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/ratchetphp/Pawl/zipball/2c582373c78271de32cb04c755c4c0db7e09c9c0",
-                "reference": "2c582373c78271de32cb04c755c4c0db7e09c9c0",
-                "shasum": ""
-            },
-            "require": {
-                "evenement/evenement": "^3.0 || ^2.0",
-                "guzzlehttp/psr7": "^2.0",
-                "php": ">=7.4",
-                "ratchet/rfc6455": "^0.3.1 || ^0.4.0",
-                "react/socket": "^1.9"
-            },
-            "require-dev": {
-                "phpunit/phpunit": "^9.3 || ^5.7 || ^4.8"
-            },
-            "suggest": {
-                "reactivex/rxphp": "~2.0"
-            },
-            "type": "library",
-            "autoload": {
-                "files": [
-                    "src/functions_include.php"
-                ],
-                "psr-4": {
-                    "Ratchet\\Client\\": "src"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "description": "Asynchronous WebSocket client",
-            "keywords": [
-                "Ratchet",
-                "async",
-                "client",
-                "websocket",
-                "websocket client"
-            ],
-            "support": {
-                "issues": "https://github.com/ratchetphp/Pawl/issues",
-                "source": "https://github.com/ratchetphp/Pawl/tree/v0.4.3"
-            },
-            "time": "2025-03-19T16:47:38+00:00"
         },
         {
             "name": "ratchet/rfc6455",
@@ -1759,57 +1598,6 @@
                 }
             ],
             "time": "2025-01-02T08:10:11+00:00"
-        },
-        {
-            "name": "textalk/websocket",
-            "version": "1.6.3",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/Textalk/websocket-php.git",
-                "reference": "67de79745b1a357caf812bfc44e0abf481cee012"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/Textalk/websocket-php/zipball/67de79745b1a357caf812bfc44e0abf481cee012",
-                "reference": "67de79745b1a357caf812bfc44e0abf481cee012",
-                "shasum": ""
-            },
-            "require": {
-                "php": "^7.4 | ^8.0",
-                "phrity/net-uri": "^1.0",
-                "phrity/util-errorhandler": "^1.0",
-                "psr/http-message": "^1.0",
-                "psr/log": "^1.0 | ^2.0 | ^3.0"
-            },
-            "require-dev": {
-                "php-coveralls/php-coveralls": "^2.0",
-                "phpunit/phpunit": "^9.0",
-                "squizlabs/php_codesniffer": "^3.5"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "WebSocket\\": "lib"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "ISC"
-            ],
-            "authors": [
-                {
-                    "name": "Fredrik Liljegren"
-                },
-                {
-                    "name": "Sören Jensen"
-                }
-            ],
-            "description": "WebSocket client and server",
-            "support": {
-                "issues": "https://github.com/Textalk/websocket-php/issues",
-                "source": "https://github.com/Textalk/websocket-php/tree/1.6.3"
-            },
-            "time": "2022-11-07T18:59:33+00:00"
         },
         {
             "name": "vlucas/phpdotenv",
