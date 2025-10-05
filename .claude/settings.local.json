@@ -7,7 +7,8 @@
       "Bash(git commit:*)",
       "Bash(daemon/fossibot-bridge.php --version)",
       "Bash(pkill:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(mv:*)"
     ],
     "deny": [],
     "ask": []

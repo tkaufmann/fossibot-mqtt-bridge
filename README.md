@@ -1,87 +1,324 @@
-# Fossibot PHP Library
+# Fossibot MQTT Bridge
 
-PHP-Bibliothek zur Steuerung von Fossibot-Geräten über die Cloud-API.
+*[Deutsch](README.de.md)*
 
-## MQTT Bridge Daemon
+Integrate Fossibot power stations into smart home systems (Home Assistant, Node-RED, ioBroker, etc.) via standardized MQTT.
 
-Der Daemon verbindet Fossibot Cloud mit einem lokalen MQTT-Broker.
+## Problem and Solution
 
-**Funktionen:**
-- Multi-Account-Unterstützung
-- ReactPHP Event Loop (non-blocking I/O)
-- Standard-MQTT mit JSON-Payloads
-- Automatische Wiederverbindung
-- systemd-Integration
-- Strukturiertes Logging
+Fossibot power stations do offer MQTT access, but:
+- Non-standard authentication via Cloud API
+- Undocumented and sometimes contradictory API
+- Only accessible through the official app
 
-### Installation
+This bridge solves the problem by:
+- Asynchronous connection to the Fossibot Cloud API
+- Processing raw data into standardized JSON messages
+- Publishing via local MQTT broker (default: Mosquitto)
+- Compatible with any MQTT server on the local network
+
+**Important**: Fossibot allows only one active connection per account. When the bridge is connected, the official app will be logged out and vice versa.
+
+## Status and Limitations
+
+This project is under active development:
+
+- **Tested with**: Fossibot F2400
+- **Other models**: Probably compatible (F3000, F2000, etc.), but untested
+- **Multi-account**: Configuration supports multiple accounts, but untested
+- **Stability**: Bridge runs stable in continuous operation, further testing welcome
+
+Feedback on other models or issues welcome via GitHub Issues.
+
+## How It Works
+
+The bridge maintains a persistent connection to the Fossibot Cloud and acts as an intermediary to the local network:
+
+1. **Cloud Connection**: Authenticates with Fossibot credentials to the Cloud API
+2. **Status Polling**: Continuously queries device status (default: every 30 seconds)
+3. **MQTT Publishing**: Publishes current data to local MQTT broker
+4. **Fast Control**: Forwards commands from MQTT broker to the Cloud (typical response time ~2 seconds)
+
+The persistent connection ensures timely status updates and commands are transmitted significantly faster than via the official app.
+
+## Installation
+
+### Docker Compose (recommended)
+
+1. Copy example files:
+```bash
+cp docker-compose.example.yml docker-compose.yml
+cp config/config.docker.json config.json
+```
+
+2. Edit `config.json` with credentials:
+```bash
+nano config.json
+```
+
+Required settings:
+- `accounts[].email`: Fossibot account email
+- `accounts[].password`: Fossibot password
+
+3. Start containers:
+```bash
+docker compose up -d
+```
+
+4. Check status:
+```bash
+docker compose logs -f fossibot-bridge
+curl http://localhost:8082/health
+```
+
+### Docker Run
+
+Without Docker Compose, you can start the containers manually:
 
 ```bash
-composer install
-cp config/example.json config/config.json
-nano config/config.json
-php daemon/fossibot-bridge.php --config config/config.json
+# Create config
+cp config/config.docker.json config.json
+nano config.json  # Add your credentials
+
+# Mosquitto MQTT Broker
+docker run -d \
+  --name fossibot-mosquitto \
+  -p 1883:1883 \
+  -v $(pwd)/docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+  eclipse-mosquitto:2
+
+# Fossibot Bridge
+docker run -d \
+  --name fossibot-bridge \
+  -p 8082:8080 \
+  -v $(pwd)/config.json:/etc/fossibot/config.json:ro \
+  --link fossibot-mosquitto:mosquitto \
+  timkaufmann/fossibot-bridge:latest
 ```
 
-**systemd Service:**
+## Configuration
 
+The `config.json` controls the bridge behavior:
+
+### Accounts
+```json
+{
+  "accounts": [
+    {
+      "email": "your@email.com",
+      "password": "YourPassword",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Multiple accounts are supported. Only accounts with `"enabled": true` will be connected.
+
+### MQTT Broker
+```json
+{
+  "mosquitto": {
+    "host": "mosquitto",
+    "port": 1883,
+    "username": null,
+    "password": null,
+    "client_id": "fossibot_bridge"
+  }
+}
+```
+
+- **host**: Hostname or IP of the MQTT broker
+- **port**: MQTT port (default: 1883)
+- **username/password**: Credentials if broker uses authentication
+- **client_id**: Unique client ID for MQTT connection
+
+### Daemon
+```json
+{
+  "daemon": {
+    "log_file": "/var/log/fossibot/bridge.log",
+    "log_level": "info",
+    "pid_file": "/var/lib/fossibot/bridge.pid"
+  }
+}
+```
+
+- **log_level**: `debug`, `info`, `warning`, `error`
+- Docker: Use paths `/var/log/fossibot` and `/var/lib/fossibot`
+- Native: Relative paths like `logs/bridge.log` are possible
+
+### Bridge Behavior
+```json
+{
+  "bridge": {
+    "status_publish_interval": 60,
+    "device_poll_interval": 30,
+    "reconnect_delay_min": 5,
+    "reconnect_delay_max": 60
+  }
+}
+```
+
+- **status_publish_interval**: Seconds between bridge status updates
+- **device_poll_interval**: Seconds between device status queries
+- **reconnect_delay_min/max**: Wait time on connection failure
+
+## MQTT Topics
+
+### Receiving Device Status
+
+The bridge publishes the status of each device to:
+```
+fossibot/{MAC-Address}/state
+```
+
+Example for topic `fossibot/7C2C67AB5F0E/state`:
+```json
+{
+  "mac": "7C2C67AB5F0E",
+  "model": "F2400",
+  "soc": 94.5,
+  "inputWatts": 0,
+  "outputWatts": 45,
+  "dcInputWatts": 0,
+  "usbOutput": true,
+  "acOutput": false,
+  "dcOutput": true,
+  "ledOutput": false,
+  "maxChargingCurrent": 15,
+  "dischargeLowerLimit": 10.0,
+  "acChargingUpperLimit": 95.0,
+  "timestamp": "2025-10-05T14:23:40+00:00"
+}
+```
+
+Messages are published with QoS 1 and the retained flag, so new subscribers immediately receive the last status.
+
+**Important fields:**
+- `soc`: Battery level in percent
+- `inputWatts`: Input power (e.g., solar, AC charging)
+- `outputWatts`: Output power (all outputs combined)
+- `usbOutput`, `acOutput`, `dcOutput`, `ledOutput`: Output status (true/false)
+- `maxChargingCurrent`: Maximum charging current in amperes
+- `dischargeLowerLimit`: Lower discharge limit in percent
+- `acChargingUpperLimit`: Upper charging limit for AC charging in percent
+
+### Controlling Devices
+
+Commands are sent to the command topic:
+```
+fossibot/{MAC-Address}/command
+```
+
+**Switching outputs:**
 ```bash
-cd daemon
-sudo ./install-systemd.sh
-sudo nano /etc/fossibot/config.json
-sudo systemctl enable --now fossibot-bridge
-sudo systemctl status fossibot-bridge
+# Turn USB on
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"usb_on"}'
+
+# Turn USB off
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"usb_off"}'
+
+# Turn AC on
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"ac_on"}'
+
+# Turn AC off
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"ac_off"}'
+
+# Turn DC on
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"dc_on"}'
+
+# Turn DC off
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"dc_off"}'
+
+# Turn LED on
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"led_on"}'
+
+# Turn LED off
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"led_off"}'
 ```
 
-### MQTT Topics
+**Changing settings:**
+```bash
+# Set maximum charging current (1-20 amperes)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_max_charging_current","value":15}'
 
-**Device State:**
-```
-fossibot/{mac}/state
-{"soc": 85.5, "inputWatts": 450, "outputWatts": 120, "usbOutput": true, ...}
-QoS: 1, Retained
-```
+# Set lower discharge limit (0-100%)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_discharge_lower_limit","value":10.0}'
 
-**Device Commands:**
-```
-fossibot/{mac}/command
-{"action": "usb_on"}
-QoS: 1
+# Set upper charging limit (0-100%)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_upper_limit","value":95.0}'
 ```
 
-**Bridge Status:**
+### Bridge Status
+
+The bridge publishes its own status to:
 ```
 fossibot/bridge/status
-{"status": "online", "version": "2.0.0", ...}
-QoS: 1, Retained
 ```
 
-### Dokumentation
+Example:
+```json
+{
+  "status": "online",
+  "version": "2.0.0",
+  "uptime": 3600,
+  "accounts": {
+    "total": 1,
+    "connected": 1,
+    "disconnected": 0
+  },
+  "devices": {
+    "total": 2,
+    "online": 2,
+    "offline": 0
+  },
+  "mqtt": {
+    "cloud_clients": 1,
+    "local_broker": "connected"
+  },
+  "memory": {
+    "usage_mb": 12,
+    "limit_mb": 128
+  }
+}
+```
 
-`docs/daemon/`:
-- [00-OVERVIEW.md](docs/daemon/00-OVERVIEW.md) - Architektur-Übersicht
-- [01-ARCHITECTURE.md](docs/daemon/01-ARCHITECTURE.md) - Technisches Design
-- [02-TOPICS-MESSAGES.md](docs/daemon/02-TOPICS-MESSAGES.md) - MQTT-Protokoll
-- [DEPLOYMENT.md](daemon/DEPLOYMENT.md) - Production-Deployment
+## Troubleshooting
 
-### Integration
+### Container won't start
+```bash
+docker compose logs fossibot-bridge
+```
 
-`examples/`:
-- Home Assistant YAML
-- Node-RED Flows
-- IP-Symcon PHP
-- Python MQTT Client
+Common causes:
+- Incorrect credentials in `config.json`
+- Mosquitto broker unreachable
+- Ports already in use
 
-### Entwicklung
+### No MQTT messages
+```bash
+# Test MQTT connection
+mosquitto_sub -h localhost -t 'fossibot/#' -v
 
-Implementierungs-Phasen:
-1. [Phase 0](docs/daemon/03-PHASE-0-SETUP.md) - Setup & Dependencies
-2. [Phase 1](docs/daemon/04-PHASE-1-CLIENT.md) - AsyncCloudClient
-3. [Phase 2](docs/daemon/05-PHASE-2-BRIDGE.md) - MqttBridge
-4. [Phase 3](docs/daemon/06-PHASE-3-RECONNECT.md) - Reconnect-Logik
-5. [Phase 4](docs/daemon/07-PHASE-4-CLI.md) - CLI & systemd
+# Check bridge status
+curl http://localhost:8082/health
+```
 
-Testing: [09-TESTING.md](docs/daemon/09-TESTING.md)
+### Commands don't work
+- Is the MAC address in the topic correct?
+- Is the JSON payload valid? (Use an online JSON validator)
+- Is the device online? (Check status topic)
+
+More information: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## Documentation
+
+- [docs/INSTALL.md](docs/INSTALL.md) - Native installation & systemd setup
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) - Operations & maintenance
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Troubleshooting
+- [docs/UPGRADE.md](docs/UPGRADE.md) - Upgrade guide
+- [docs/deployment/](docs/deployment/) - Docker deployment details
 
 ## License
 

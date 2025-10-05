@@ -1,0 +1,58 @@
+# ABOUTME: Docker build ignore patterns
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docs
+*.md
+docs/
+examples/
+
+# Tests
+tests/
+phpunit.xml
+.phpunit.result.cache
+
+# Development
+.env
+.env.*
+*.local
+vendor/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+bridge-debug.log
+
+# Runtime
+*.pid
+bridge.pid
+
+# Cache
+cache/
+/var/
+
+# Config (will be mounted)
+config/config.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Scripts
+scripts/
+start-debug-bridge.sh

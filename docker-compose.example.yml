@@ -1,4 +1,10 @@
-# ABOUTME: Docker Compose setup for Fossibot MQTT Bridge with Mosquitto
+# ABOUTME: Example Docker Compose setup for Fossibot MQTT Bridge
+#
+# Usage:
+#   1. Copy this file: cp docker-compose.example.yml docker-compose.yml
+#   2. Create config: cp config/config.docker.json config.json
+#   3. Edit config.json with your Fossibot credentials
+#   4. Start: docker compose up -d
 #
 services:
   # Mosquitto MQTT Broker
@@ -10,9 +16,9 @@ services:
       - "1883:1883"    # MQTT
       - "9001:9001"    # WebSocket (optional)
     volumes:
-      - ./mounts/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
-      - ./mounts/mosquitto/logs:/mosquitto/log
+      - mosquitto-logs:/mosquitto/log
     networks:
       - fossibot-net
     healthcheck:
@@ -36,9 +42,9 @@ services:
     ports:
       - "8082:8080"    # Health endpoint
     volumes:
-      - ./mounts/fossibot/config.json:/etc/fossibot/config.json:ro
+      - ./config.json:/etc/fossibot/config.json:ro
       - fossibot-cache:/var/lib/fossibot
-      - ./mounts/fossibot/logs:/var/log/fossibot
+      - fossibot-logs:/var/log/fossibot
     networks:
       - fossibot-net
     environment:
@@ -61,4 +67,6 @@ networks:
 
 volumes:
   mosquitto-data:
+  mosquitto-logs:
   fossibot-cache:
+  fossibot-logs:

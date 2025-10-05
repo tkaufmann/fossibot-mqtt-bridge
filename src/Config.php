@@ -19,7 +19,7 @@ final class Config
     {
         if (!self::$initialized) {
             $dotenv = Dotenv::createImmutable(dirname(__DIR__));
-            $dotenv->load();
+            $dotenv->safeLoad();
             self::$initialized = true;
         }
     }

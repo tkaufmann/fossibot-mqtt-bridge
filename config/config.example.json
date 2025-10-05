@@ -1,0 +1,25 @@
+{
+  "accounts": [
+    {
+      "email": "your-email@example.com",
+      "password": "your-password"
+    }
+  ],
+  "mosquitto": {
+    "host": "mosquitto",
+    "port": 1883,
+    "client_id": "fossibot-bridge",
+    "username": "",
+    "password": ""
+  },
+  "daemon": {
+    "log_file": "/var/log/fossibot/bridge.log",
+    "log_level": "info",
+    "pid_file": "/var/run/fossibot/bridge.pid"
+  },
+  "bridge": {
+    "status_publish_interval": 30,
+    "reconnect_delay_min": 5,
+    "reconnect_delay_max": 60
+  }
+}

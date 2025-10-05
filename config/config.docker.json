@@ -1,0 +1,41 @@
+{
+  "accounts": [
+    {
+      "email": "user@example.com",
+      "password": "your-password-here",
+      "enabled": true
+    }
+  ],
+  "mosquitto": {
+    "host": "mosquitto",
+    "port": 1883,
+    "username": null,
+    "password": null,
+    "client_id": "fossibot_bridge"
+  },
+  "daemon": {
+    "log_file": "/var/log/fossibot/bridge.log",
+    "log_level": "info",
+    "pid_file": "/var/lib/fossibot/bridge.pid"
+  },
+  "health": {
+    "enabled": true,
+    "port": 8080
+  },
+  "cache": {
+    "directory": "/var/lib/fossibot",
+    "token_ttl_safety_margin": 300,
+    "device_list_ttl": 86400,
+    "device_refresh_interval": 86400
+  },
+  "bridge": {
+    "status_publish_interval": 60,
+    "device_poll_interval": 30,
+    "reconnect_delay_min": 5,
+    "reconnect_delay_max": 60
+  },
+  "debug": {
+    "log_raw_registers": false,
+    "log_update_source": false
+  }
+}

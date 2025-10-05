@@ -1,5 +1,26 @@
+# Runtime & Development
 vendor/
 .env
-config/config.json
+config.json
+docker-compose.yml
 logs/
 mounts/
+*.log
+
+# Test files
+test_*.php
+test-*.php
+test-*.sh
+*-debug.sh
+start-*.sh
+
+# KI & Internal Docs (not for public repo)
+CLAUDE.md
+GEMINI.md
+docs/internal/
+docs/daemon/
+
+# IDE & System
+.idea/
+.DS_Store
+bin/
