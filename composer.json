@@ -14,7 +14,8 @@
         "react/dns": "^1.13",
         "evenement/evenement": "^3.0",
         "react/http": "^1.11",
-        "ratchet/rfc6455": "^0.4.0"
+        "ratchet/rfc6455": "^0.4.0",
+        "ratchet/pawl": "^0.4.3"
     },
     "autoload": {
         "psr-4": {
