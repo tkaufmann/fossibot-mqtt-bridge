@@ -34,6 +34,18 @@ Rückmeldungen zu anderen Modellen oder Problemen gerne via GitHub Issues.
 
 Die Bridge hält eine permanente Verbindung zur Fossibot Cloud und arbeitet als Vermittler zum lokalen Netzwerk:
 
+```mermaid
+graph LR
+    A[Fossibot Cloud API] <-->|MQTT WebSocket| B[Bridge]
+    B <-->|MQTT TCP| C[Mosquitto Broker]
+    C <-->|Subscribe/Publish| D[Home Assistant]
+    C <-->|Subscribe/Publish| E[Node-RED]
+    C <-->|Subscribe/Publish| F[Custom Scripts]
+
+    style B fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style C fill:#2196F3,stroke:#1565C0,color:#fff
+```
+
 1. **Cloud-Verbindung**: Authentifiziert sich mit Fossibot-Zugangsdaten bei der Cloud-API
 2. **Status-Polling**: Fragt Gerätestatus kontinuierlich ab (Standard: alle 30 Sekunden)
 3. **MQTT-Publishing**: Publiziert aktuelle Daten auf lokalem MQTT-Broker
