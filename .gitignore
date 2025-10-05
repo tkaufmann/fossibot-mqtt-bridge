@@ -2,3 +2,4 @@ vendor/
 .env
 config/config.json
 logs/
+mounts/

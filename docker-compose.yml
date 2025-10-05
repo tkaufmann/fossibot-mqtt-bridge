@@ -15,7 +15,7 @@ services:
       # Optional: Override default config (auskommentiert = nutzt Default aus Image)
       # - ./docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
-      - ./docker/mosquitto/logs:/mosquitto/log
+      - ./mounts/mosquitto/logs:/mosquitto/log
     networks:
       - fossibot-net
     healthcheck:
@@ -41,7 +41,7 @@ services:
     volumes:
       - ./config/config.json:/etc/fossibot/config.json:ro
       - fossibot-cache:/var/lib/fossibot
-      - ./logs:/var/log/fossibot
+      - ./mounts/fossibot/logs:/var/log/fossibot
     networks:
       - fossibot-net
     environment:
