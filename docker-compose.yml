@@ -3,14 +3,17 @@
 services:
   # Mosquitto MQTT Broker
   mosquitto:
-    image: eclipse-mosquitto:2
+    build:
+      context: ./docker/mosquitto
+      dockerfile: Dockerfile
     container_name: fossibot-mosquitto
     restart: unless-stopped
     ports:
       - "1883:1883"    # MQTT
       - "9001:9001"    # WebSocket (optional)
     volumes:
-      - ./docker/mosquitto/config:/mosquitto/config:ro
+      # Optional: Override default config (auskommentiert = nutzt Default aus Image)
+      # - ./docker/mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
       - ./docker/mosquitto/logs:/mosquitto/log
     networks:
