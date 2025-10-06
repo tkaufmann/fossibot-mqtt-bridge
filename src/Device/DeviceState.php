@@ -70,15 +70,18 @@ class DeviceState
             $this->lastUpdateSource = $wasCommandTriggered ? 'command' : 'spontaneous';
         }
 
-        // Power values (assumed live in all topics based on testing)
-        if (isset($registers[4])) {
-            $this->dcInputWatts = $registers[4]; // DC Input Power
-        }
-        if (isset($registers[6])) {
-            $this->inputWatts = $registers[6]; // Total Input Power
-        }
-        if (isset($registers[39])) {
-            $this->outputWatts = $registers[39]; // Total Output Power
+        // Power values
+        // ONLY update from /client/04 - /client/data has cached/stale values (always 0)
+        if ($isImmediateResponse) {
+            if (isset($registers[4])) {
+                $this->dcInputWatts = $registers[4]; // DC Input Power
+            }
+            if (isset($registers[6])) {
+                $this->inputWatts = $registers[6]; // Total Input Power
+            }
+            if (isset($registers[39])) {
+                $this->outputWatts = $registers[39]; // Total Output Power
+            }
         }
 
         // Output States (Register 41 bitfield)
