@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fossibot\Commands;
 
 use Fossibot\Utils\ModbusCrc;
+use InvalidArgumentException;
 
 /**
  * Write single register command (Modbus function 6).
@@ -24,10 +25,10 @@ class WriteRegisterCommand extends Command
         private readonly CommandResponseType $responseType
     ) {
         if ($register < 0 || $register > 65535) {
-            throw new \InvalidArgumentException("Register must be 0-65535, got: {$register}");
+            throw new InvalidArgumentException("Register must be 0-65535, got: {$register}");
         }
         if ($value < 0 || $value > 65535) {
-            throw new \InvalidArgumentException("Value must be 0-65535, got: {$value}");
+            throw new InvalidArgumentException("Value must be 0-65535, got: {$value}");
         }
     }
 

@@ -28,6 +28,13 @@
         }
     ],
     "require-dev": {
-        "phpunit/phpunit": "^10.5"
+        "phpunit/phpunit": "^10.5",
+        "squizlabs/php_codesniffer": "^4.0",
+        "slevomat/coding-standard": "^8.24"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
     }
 }

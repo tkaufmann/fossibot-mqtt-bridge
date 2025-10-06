@@ -1,10 +1,12 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Fossibot\Cache;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use Fossibot\ValueObjects\Device;
 
 /**
  * File-based cache for device lists with TTL.
@@ -94,7 +96,7 @@ class DeviceCache
 
         // Deserialize Device objects
         return array_map(
-            fn($deviceData) => \Fossibot\ValueObjects\Device::fromArray($deviceData),
+            fn($deviceData) => Device::fromArray($deviceData),
             $data['devices']
         );
     }

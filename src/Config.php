@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Fossibot;
 
 use Dotenv\Dotenv;
+use RuntimeException;
 
 final class Config
 {
@@ -66,12 +67,12 @@ final class Config
     public static function getEmail(): string
     {
         self::ensureInitialized();
-        return $_ENV['FOSSIBOT_EMAIL'] ?? throw new \RuntimeException('FOSSIBOT_EMAIL not set in .env');
+        return $_ENV['FOSSIBOT_EMAIL'] ?? throw new RuntimeException('FOSSIBOT_EMAIL not set in .env');
     }
 
     public static function getPassword(): string
     {
         self::ensureInitialized();
-        return $_ENV['FOSSIBOT_PASSWORD'] ?? throw new \RuntimeException('FOSSIBOT_PASSWORD not set in .env');
+        return $_ENV['FOSSIBOT_PASSWORD'] ?? throw new RuntimeException('FOSSIBOT_PASSWORD not set in .env');
     }
 }

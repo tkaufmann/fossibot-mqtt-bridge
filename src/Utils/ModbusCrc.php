@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Fossibot\Utils;
 
+use InvalidArgumentException;
+
 /**
  * CRC-16 Modbus checksum calculator for MQTT commands.
  */
@@ -23,12 +25,12 @@ class ModbusCrc
     public static function calculate(array $data): int
     {
         if (empty($data)) {
-            throw new \InvalidArgumentException('Data array cannot be empty');
+            throw new InvalidArgumentException('Data array cannot be empty');
         }
 
         foreach ($data as $index => $byte) {
             if (!is_int($byte) || $byte < 0 || $byte > 255) {
-                throw new \InvalidArgumentException("Invalid byte value at index {$index}: {$byte}. Must be integer 0-255");
+                throw new InvalidArgumentException("Invalid byte value at index {$index}: {$byte}. Must be integer 0-255");
             }
         }
 

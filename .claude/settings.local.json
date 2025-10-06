@@ -9,7 +9,9 @@
       "Bash(pkill:*)",
       "Bash(git rm:*)",
       "Bash(mv:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(./vendor/bin/phpcbf:*)",
+      "Bash(./vendor/bin/phpcs:*)"
     ],
     "deny": [],
     "ask": []

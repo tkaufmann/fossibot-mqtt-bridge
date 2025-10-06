@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Fossibot\Commands;
 
+use InvalidArgumentException;
+
 /**
  * Command to set maximum charging current on F2400 device.
  *
@@ -26,7 +28,7 @@ class MaxChargingCurrentCommand extends WriteRegisterCommand
     public function __construct(private readonly int $currentAmperes)
     {
         if ($currentAmperes < self::MIN_CURRENT || $currentAmperes > self::MAX_CURRENT) {
-            throw new \InvalidArgumentException(
+            throw new InvalidArgumentException(
                 "Charging current must be between " . self::MIN_CURRENT . " and " . self::MAX_CURRENT . " Amperes. Got: {$currentAmperes}"
             );
         }

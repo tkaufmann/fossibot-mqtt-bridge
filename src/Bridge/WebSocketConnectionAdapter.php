@@ -8,6 +8,9 @@ use Evenement\EventEmitter;
 use Ratchet\Client\WebSocket;
 use Ratchet\RFC6455\Messaging\Frame;
 use React\Socket\ConnectionInterface;
+use Exception;
+use React\Stream\WritableStreamInterface;
+use RuntimeException;
 
 /**
  * Adapter that wraps Ratchet WebSocket to implement ConnectionInterface.
@@ -29,7 +32,7 @@ class WebSocketConnectionAdapter extends EventEmitter implements ConnectionInter
             $this->emit('close');
         });
 
-        $this->websocket->on('error', function (\Exception $e) {
+        $this->websocket->on('error', function (Exception $e) {
             $this->emit('error', [$e]);
         });
     }
@@ -75,9 +78,9 @@ class WebSocketConnectionAdapter extends EventEmitter implements ConnectionInter
         return true;
     }
 
-    public function pipe(\React\Stream\WritableStreamInterface $dest, array $options = []): \React\Stream\WritableStreamInterface
+    public function pipe(WritableStreamInterface $dest, array $options = []): WritableStreamInterface
     {
-        throw new \RuntimeException('Pipe not supported for WebSocket connections');
+        throw new RuntimeException('Pipe not supported for WebSocket connections');
     }
 
     public function getRemoteAddress(): ?string

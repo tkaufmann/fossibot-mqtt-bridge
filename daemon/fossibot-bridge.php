@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+
 // ABOUTME: CLI entry point for Fossibot MQTT Bridge daemon
 // Loads config, initializes bridge, runs event loop
 
@@ -16,7 +17,6 @@ require __DIR__ . '/../vendor/autoload.php';
 define('PROJECT_ROOT', dirname(__DIR__));
 
 use Fossibot\Bridge\MqttBridge;
-use React\EventLoop\Loop;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\RotatingFileHandler;
@@ -86,21 +86,21 @@ if (!str_starts_with($configPath, '/')) {
 function loadConfig(string $path): array
 {
     if (!file_exists($path)) {
-        throw new \RuntimeException("Config file not found: $path");
+        throw new RuntimeException("Config file not found: $path");
     }
 
     if (!is_readable($path)) {
-        throw new \RuntimeException("Config file not readable: $path");
+        throw new RuntimeException("Config file not readable: $path");
     }
 
     $json = file_get_contents($path);
     if ($json === false) {
-        throw new \RuntimeException("Failed to read config file: $path");
+        throw new RuntimeException("Failed to read config file: $path");
     }
 
     $config = json_decode($json, true);
     if (json_last_error() !== JSON_ERROR_NONE) {
-        throw new \RuntimeException("Invalid JSON in config file: " . json_last_error_msg());
+        throw new RuntimeException("Invalid JSON in config file: " . json_last_error_msg());
     }
 
     return $config;
@@ -201,8 +201,7 @@ try {
         echo "\n✅ Validation complete (--validate flag set, not starting daemon)\n";
         exit(0);
     }
-
-} catch (\Throwable $e) {
+} catch (Throwable $e) {
     echo "\n❌ Config error: " . $e->getMessage() . "\n";
     exit(1);
 }
@@ -265,7 +264,7 @@ function checkAndCreatePidFile(string $pidFile): void
         // Check if process is still running
         if (posix_kill($oldPid, 0)) {
             // Process exists
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 "Bridge is already running with PID $oldPid\n" .
                 "PID file: $pidFile\n" .
                 "Use 'fossibot-bridge-ctl stop' to stop it first."
@@ -284,7 +283,7 @@ function checkAndCreatePidFile(string $pidFile): void
     echo "✅ PID file created: $pidFile (PID: $currentPid)\n";
 
     // Register shutdown handler to remove PID file
-    register_shutdown_function(function() use ($pidFile, $currentPid) {
+    register_shutdown_function(function () use ($pidFile, $currentPid) {
         if (file_exists($pidFile)) {
             $filePid = (int)trim(file_get_contents($pidFile));
 
@@ -318,7 +317,7 @@ function getPidFilePath(array $config): string
 try {
     $pidFile = getPidFilePath($config);
     checkAndCreatePidFile($pidFile);
-} catch (\RuntimeException $e) {
+} catch (RuntimeException $e) {
     echo "\n❌ " . $e->getMessage() . "\n";
     exit(1);
 }
@@ -332,7 +331,7 @@ function createLogger(array $config): Logger
     $logger = new Logger('fossibot_bridge');
 
     // Map log level string to Monolog constant
-    $logLevel = match($config['daemon']['log_level']) {
+    $logLevel = match ($config['daemon']['log_level']) {
         'debug' => Logger::DEBUG,
         'info' => Logger::INFO,
         'warning' => Logger::WARNING,
@@ -376,7 +375,7 @@ function createLogger(array $config): Logger
 try {
     $logger = createLogger($config);
     echo "✅ Logger initialized\n\n";
-} catch (\Throwable $e) {
+} catch (Throwable $e) {
     echo "❌ Failed to initialize logger: " . $e->getMessage() . "\n";
     exit(1);
 }
@@ -399,8 +398,7 @@ try {
     echo "═══════════════════════════════════════\n\n";
 
     $bridge->run();
-
-} catch (\Throwable $e) {
+} catch (Throwable $e) {
     $logger->critical('Bridge startup failed', [
         'error' => $e->getMessage(),
         'trace' => $e->getTraceAsString()

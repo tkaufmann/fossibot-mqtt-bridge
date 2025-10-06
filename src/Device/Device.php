@@ -22,7 +22,8 @@ class Device
         private readonly string $model,
         private readonly int $onlineStatus,
         private readonly string $createdAt
-    ) {}
+    ) {
+    }
 
     /**
      * Get device MAC address without colons for MQTT topics.

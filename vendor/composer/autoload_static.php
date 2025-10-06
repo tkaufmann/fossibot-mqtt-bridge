@@ -24,6 +24,7 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
             'Symfony\\Polyfill\\Php80\\' => 23,
             'Symfony\\Polyfill\\Mbstring\\' => 26,
             'Symfony\\Polyfill\\Ctype\\' => 23,
+            'SlevomatCodingStandard\\' => 23,
         ),
         'R' => 
         array (
@@ -44,6 +45,8 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
             'Psr\\Http\\Message\\' => 17,
             'PhpParser\\' => 10,
             'PhpOption\\' => 10,
+            'PHPStan\\PhpDocParser\\' => 21,
+            'PHPCSStandards\\Composer\\Plugin\\Installers\\PHPCodeSniffer\\' => 57,
         ),
         'M' => 
         array (
@@ -82,6 +85,10 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         'Symfony\\Polyfill\\Ctype\\' => 
         array (
             0 => __DIR__ . '/..' . '/symfony/polyfill-ctype',
+        ),
+        'SlevomatCodingStandard\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/slevomat/coding-standard/SlevomatCodingStandard',
         ),
         'React\\Stream\\' => 
         array (
@@ -139,6 +146,14 @@ class ComposerStaticInitbd46b28902408e58a005690d120333d1
         'PhpOption\\' => 
         array (
             0 => __DIR__ . '/..' . '/phpoption/phpoption/src/PhpOption',
+        ),
+        'PHPStan\\PhpDocParser\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/phpstan/phpdoc-parser/src',
+        ),
+        'PHPCSStandards\\Composer\\Plugin\\Installers\\PHPCodeSniffer\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/dealerdirect/phpcodesniffer-composer-installer/src',
         ),
         'Monolog\\' => 
         array (

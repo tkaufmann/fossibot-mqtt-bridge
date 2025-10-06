@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Fossibot\Commands;
 
+use InvalidArgumentException;
+
 /**
  * Command to set AC charging upper limit on F2400 device.
  *
@@ -26,7 +28,7 @@ class AcChargingUpperLimitCommand extends WriteRegisterCommand
     public function __construct(private readonly int $limitTenths)
     {
         if ($limitTenths < self::MIN_VALUE || $limitTenths > self::MAX_VALUE) {
-            throw new \InvalidArgumentException(
+            throw new InvalidArgumentException(
                 "AC charge limit must be " . self::MIN_VALUE . "-" . self::MAX_VALUE . " tenths (0.0%-100.0%). Got: {$limitTenths}"
             );
         }
@@ -44,7 +46,7 @@ class AcChargingUpperLimitCommand extends WriteRegisterCommand
     public static function setLimit(float $percentage): self
     {
         if ($percentage < 0.0 || $percentage > 100.0) {
-            throw new \InvalidArgumentException(
+            throw new InvalidArgumentException(
                 "AC charge limit percentage must be 0.0-100.0%. Got: {$percentage}"
             );
         }

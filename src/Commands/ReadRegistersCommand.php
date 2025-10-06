@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fossibot\Commands;
 
 use Fossibot\Utils\ModbusCrc;
+use InvalidArgumentException;
 
 /**
  * Read holding registers command (Modbus function 3).
@@ -23,13 +24,13 @@ class ReadRegistersCommand extends Command
         private readonly int $count = 80
     ) {
         if ($startRegister < 0 || $startRegister > 65535) {
-            throw new \InvalidArgumentException("Start register must be 0-65535, got: {$startRegister}");
+            throw new InvalidArgumentException("Start register must be 0-65535, got: {$startRegister}");
         }
         if ($count < 1 || $count > 125) {
-            throw new \InvalidArgumentException("Count must be 1-125 (Modbus limit), got: {$count}");
+            throw new InvalidArgumentException("Count must be 1-125 (Modbus limit), got: {$count}");
         }
         if (($startRegister + $count) > 65536) {
-            throw new \InvalidArgumentException("Register range exceeds 65535: {$startRegister} + {$count}");
+            throw new InvalidArgumentException("Register range exceeds 65535: {$startRegister} + {$count}");
         }
     }
 

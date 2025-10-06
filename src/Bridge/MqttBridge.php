@@ -1,13 +1,22 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Fossibot\Bridge;
 
+use Exception;
+use Fossibot\Cache\DeviceCache;
+use Fossibot\Cache\TokenCache;
+use Fossibot\Commands\CommandResponseType;
+use Fossibot\Commands\ReadRegistersCommand;
 use Fossibot\Device\DeviceStateManager;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
+use React\EventLoop\TimerInterface;
+
+use function React\Promise\all;
 
 /**
  * MQTT Bridge orchestrator with ReactPHP event loop.
@@ -31,8 +40,8 @@ class MqttBridge
     private PayloadTransformer $payloadTransformer;
 
     // Cache instances (shared across all cloud clients)
-    private ?\Fossibot\Cache\TokenCache $tokenCache = null;
-    private ?\Fossibot\Cache\DeviceCache $deviceCache = null;
+    private ?TokenCache $tokenCache = null;
+    private ?DeviceCache $deviceCache = null;
 
     // Health monitoring
     private BridgeMetrics $metrics;
@@ -50,7 +59,7 @@ class MqttBridge
     private array $connectionPromises = [];
 
     // Device state polling
-    private ?\React\EventLoop\TimerInterface $pollingTimer = null;
+    private ?TimerInterface $pollingTimer = null;
     private float $lastPollTime = 0;
 
     // Command tracking for spontaneous vs. triggered /client/04 detection
@@ -82,11 +91,11 @@ class MqttBridge
 
             // Token cache
             $tokenTtlSafety = $this->config['cache']['token_ttl_safety_margin'] ?? 300;
-            $this->tokenCache = new \Fossibot\Cache\TokenCache($cacheDir, $tokenTtlSafety, $this->logger);
+            $this->tokenCache = new TokenCache($cacheDir, $tokenTtlSafety, $this->logger);
 
             // Device cache
             $deviceTtl = $this->config['cache']['device_list_ttl'] ?? 86400;
-            $this->deviceCache = new \Fossibot\Cache\DeviceCache($cacheDir, $deviceTtl, $this->logger);
+            $this->deviceCache = new DeviceCache($cacheDir, $deviceTtl, $this->logger);
 
             $this->logger->info('Cache initialized', [
                 'directory' => $cacheDir,
@@ -113,13 +122,13 @@ class MqttBridge
         // Initialize accounts and wait for them to connect
         $this->initializeAccounts();
 
-        \React\Promise\all($this->connectionPromises)->then(
+        all($this->connectionPromises)->then(
             function () {
                 $this->logger->info('All accounts connected successfully, proceeding with broker connection.');
                 // Connect to local broker (async)
                 $this->connectBroker();
             },
-            function (\Exception $e) {
+            function (Exception $e) {
                 $this->logger->error('A critical error occurred during account connection, shutting down.', [
                     'error' => $e->getMessage(),
                 ]);
@@ -140,7 +149,7 @@ class MqttBridge
 
             try {
                 $this->healthServer->start($port);
-            } catch (\Exception $e) {
+            } catch (Exception $e) {
                 $this->logger->error('Failed to start health server, continuing without it', [
                     'error' => $e->getMessage()
                 ]);
@@ -150,15 +159,15 @@ class MqttBridge
         // Periodic device list refresh (24h)
         if (isset($this->config['cache']['device_refresh_interval'])) {
             $refreshInterval = $this->config['cache']['device_refresh_interval'];
-            $this->loop->addPeriodicTimer($refreshInterval, function() {
+            $this->loop->addPeriodicTimer($refreshInterval, function () {
                 $this->logger->info('Periodic device list refresh triggered');
 
                 foreach ($this->cloudClients as $client) {
                     $client->refreshDeviceList()->then(
-                        function() {
+                        function () {
                             $this->logger->debug('Device list refresh completed');
                         },
-                        function(\Exception $e) {
+                        function (Exception $e) {
                             $this->logger->error('Device list refresh failed', [
                                 'error' => $e->getMessage()
                             ]);
@@ -234,13 +243,13 @@ class MqttBridge
     private function setupSignalHandlers(): void
     {
         // SIGTERM (systemd stop)
-        $this->loop->addSignal(SIGTERM, function() {
+        $this->loop->addSignal(SIGTERM, function () {
             $this->logger->info('Received SIGTERM, shutting down gracefully');
             $this->shutdown();
         });
 
         // SIGINT (Ctrl+C)
-        $this->loop->addSignal(SIGINT, function() {
+        $this->loop->addSignal(SIGINT, function () {
             $this->logger->info('Received SIGINT, shutting down gracefully');
             $this->shutdown();
         });
@@ -276,10 +285,10 @@ class MqttBridge
 
             // Connect (async) - Store promise to prevent GC cleanup
             $this->connectionPromises[$email] = $client->connect()->then(
-                function() use ($email) {
+                function () use ($email) {
                     $this->logger->info('Account connected', ['email' => $email]);
                 },
-                function($error) use ($email) {
+                function ($error) use ($email) {
                     $this->logger->error('Account connection failed', [
                         'email' => $email,
                         'error' => $error->getMessage()
@@ -305,7 +314,7 @@ class MqttBridge
 
     private function registerCloudClientEvents(AsyncCloudClient $client, string $email): void
     {
-        $client->on('connect', function() use ($email, $client) {
+        $client->on('connect', function () use ($email, $client) {
             $this->logger->info('Cloud client connected', ['email' => $email]);
 
             // Publish availability for all devices
@@ -315,16 +324,16 @@ class MqttBridge
             }
         });
 
-        $client->on('message', function($topic, $payload) use ($email) {
+        $client->on('message', function ($topic, $payload) use ($email) {
             $this->handleCloudMessage($email, $topic, $payload);
         });
 
-        $client->on('disconnect', function() use ($email) {
+        $client->on('disconnect', function () use ($email) {
             $this->logger->warning('Cloud client disconnected', ['email' => $email]);
             // TODO: Reconnect logic in Phase 3
         });
 
-        $client->on('error', function($error) use ($email) {
+        $client->on('error', function ($error) use ($email) {
             $this->logger->error('Cloud client error', [
                 'email' => $email,
                 'error' => $error->getMessage()
@@ -365,13 +374,29 @@ class MqttBridge
         );
 
         // Setup message handler
-        $this->localBrokerClient->on('message', function($topic, $payload) {
+        $this->localBrokerClient->on('message', function ($topic, $payload) {
             $this->handleBrokerCommand($topic, $payload);
+        });
+
+        // Setup disconnect handler with reconnect logic
+        $this->localBrokerClient->on('disconnect', function () {
+            $this->logger->warning('Local broker disconnected, attempting reconnect');
+            $this->metrics->setLocalBrokerConnected(false);
+
+            // Schedule reconnect with exponential backoff
+            $this->scheduleBrokerReconnect();
+        });
+
+        // Setup error handler
+        $this->localBrokerClient->on('error', function (Exception $e) {
+            $this->logger->error('Local broker error', [
+                'error' => $e->getMessage()
+            ]);
         });
 
         // Connect and subscribe
         $this->localBrokerClient->connect()
-            ->then(function() {
+            ->then(function () {
                 $this->logger->info('Connected to local broker');
 
                 // Reset reconnect counter on success
@@ -383,7 +408,7 @@ class MqttBridge
                 // Subscribe to command topics
                 return $this->localBrokerClient->subscribe('fossibot/+/command', 1);
             })
-            ->then(function() {
+            ->then(function () {
                 // Publish availability for all devices from all connected clients
                 foreach ($this->cloudClients as $client) {
                     if ($client->isConnected()) {
@@ -414,7 +439,7 @@ class MqttBridge
                     'polling_interval' => $this->config['bridge']['device_poll_interval'] ?? 30
                 ]);
             })
-            ->otherwise(function(\Exception $e) {
+            ->otherwise(function (Exception $e) {
                 $this->handleBrokerConnectionFailure($e);
             });
     }
@@ -422,7 +447,7 @@ class MqttBridge
     /**
      * Handles broker connection failure with exponential backoff.
      */
-    private function handleBrokerConnectionFailure(\Exception $error): void
+    private function handleBrokerConnectionFailure(Exception $error): void
     {
         $this->brokerReconnectAttempt++;
 
@@ -447,7 +472,38 @@ class MqttBridge
         ]);
 
         // Schedule reconnect attempt
-        $this->loop->addTimer($delay, function() {
+        $this->loop->addTimer($delay, function () {
+            $this->connectBroker();
+        });
+    }
+
+    /**
+     * Schedules a broker reconnect attempt (used when connection is lost after successful connect).
+     */
+    private function scheduleBrokerReconnect(): void
+    {
+        $this->brokerReconnectAttempt++;
+
+        if ($this->brokerReconnectAttempt > $this->maxBrokerReconnectAttempts) {
+            $this->logger->critical('Lost connection to local broker after max attempts', [
+                'attempts' => $this->brokerReconnectAttempt
+            ]);
+
+            // Don't give up completely - reset counter and continue trying
+            $this->brokerReconnectAttempt = 0;
+            $delay = $this->brokerBackoffDelays[count($this->brokerBackoffDelays) - 1];
+        } else {
+            $delayIndex = min($this->brokerReconnectAttempt - 1, count($this->brokerBackoffDelays) - 1);
+            $delay = $this->brokerBackoffDelays[$delayIndex];
+        }
+
+        $this->logger->warning('Connection to local broker lost, retrying', [
+            'attempt' => $this->brokerReconnectAttempt,
+            'next_retry_in_seconds' => $delay
+        ]);
+
+        // Schedule reconnect attempt
+        $this->loop->addTimer($delay, function () {
             $this->connectBroker();
         });
     }
@@ -543,8 +599,7 @@ class MqttBridge
             }
 
             $this->logger->info('Device state updated', $logData);
-
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->logger->error('Error handling cloud message', [
                 'topic' => $topic,
                 'error' => $e->getMessage()
@@ -591,11 +646,10 @@ class MqttBridge
 
             // Trigger immediate poll for settings commands (delayed response)
             // Output commands (USB/AC/DC) get instant response, no need to poll
-            if ($command->getResponseType() === \Fossibot\Commands\CommandResponseType::DELAYED) {
+            if ($command->getResponseType() === CommandResponseType::DELAYED) {
                 $this->triggerImmediatePoll();
             }
-
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $this->logger->error('Error handling broker command', [
                 'topic' => $topic,
                 'payload' => $payload,
@@ -710,7 +764,7 @@ class MqttBridge
 
                 try {
                     // Create read settings command (read 80 registers starting from 0)
-                    $command = new \Fossibot\Commands\ReadRegistersCommand(0, 80);
+                    $command = new ReadRegistersCommand(0, 80);
                     $modbusPayload = $this->payloadTransformer->commandToModbus($command);
 
                     // Publish to cloud
@@ -721,7 +775,7 @@ class MqttBridge
                         'mac' => $mac,
                         'command' => $command->getDescription()
                     ]);
-                } catch (\Exception $e) {
+                } catch (Exception $e) {
                     $this->logger->error('Failed to poll device', [
                         'mac' => $mac,
                         'error' => $e->getMessage()

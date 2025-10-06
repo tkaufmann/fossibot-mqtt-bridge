@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<ruleset name="Fossibot PHP MQTT Bridge">
+    <description>Coding standards for the Fossibot PHP MQTT Bridge project.</description>
+
+    <!-- Use the PSR-12 standard -->
+    <rule ref="PSR12"/>
+
+    <!-- Slevomat rules for clean namespaces and imports -->
+    <rule ref="SlevomatCodingStandard.Namespaces.ReferenceUsedNamesOnly"/>
+    <rule ref="SlevomatCodingStandard.Namespaces.UnusedUses">
+        <properties>
+            <property name="searchAnnotations" value="true"/>
+        </properties>
+    </rule>
+    <rule ref="SlevomatCodingStandard.Namespaces.UseFromSameNamespace"/>
+    <rule ref="SlevomatCodingStandard.Namespaces.UselessAlias"/>
+
+    <!-- Paths to check -->
+    <file>src</file>
+    <file>tests</file>
+    <file>daemon/fossibot-bridge.php</file>
+
+    <!-- Exclude vendor directory -->
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+
+    <!-- Show progress and colors -->
+    <arg name="colors"/>
+</ruleset>

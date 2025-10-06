@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Fossibot\Bridge;
@@ -13,6 +14,7 @@ use Fossibot\Commands\ReadRegistersCommand;
 use Fossibot\Commands\MaxChargingCurrentCommand;
 use Fossibot\Commands\DischargeLowerLimitCommand;
 use Fossibot\Commands\AcChargingUpperLimitCommand;
+use InvalidArgumentException;
 
 /**
  * Transforms MQTT payloads between Modbus binary and JSON formats.
@@ -68,7 +70,6 @@ class PayloadTransformer
             }
 
             return $registers;
-
         } else {
             // Format 1: Standard Modbus RTU Response
             // [SlaveID][FunctionCode][ByteCount][Data...][CRC]
@@ -141,12 +142,12 @@ class PayloadTransformer
         $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
 
         if (!isset($data['action'])) {
-            throw new \InvalidArgumentException('Missing "action" field in command JSON');
+            throw new InvalidArgumentException('Missing "action" field in command JSON');
         }
 
         $action = $data['action'];
 
-        return match($action) {
+        return match ($action) {
             'usb_on' => UsbOutputCommand::enable(),
             'usb_off' => UsbOutputCommand::disable(),
             'ac_on' => AcOutputCommand::enable(),
@@ -157,15 +158,15 @@ class PayloadTransformer
             'led_off' => LedOutputCommand::disable(),
             'read_settings' => ReadRegistersCommand::create(),
             'set_charging_current' => new MaxChargingCurrentCommand(
-                (int)($data['amperes'] ?? throw new \InvalidArgumentException('Missing amperes parameter'))
+                (int)($data['amperes'] ?? throw new InvalidArgumentException('Missing amperes parameter'))
             ),
             'set_discharge_limit' => new DischargeLowerLimitCommand(
-                (int)round(($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter')) * 10)
+                (int)round(($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10)
             ),
             'set_ac_charging_limit' => new AcChargingUpperLimitCommand(
-                (int)round(($data['percentage'] ?? throw new \InvalidArgumentException('Missing percentage parameter')) * 10)
+                (int)round(($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10)
             ),
-            default => throw new \InvalidArgumentException("Unknown action: $action")
+            default => throw new InvalidArgumentException("Unknown action: $action")
         };
     }
 

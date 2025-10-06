@@ -1,13 +1,31 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Fossibot\Bridge;
 
 use Evenement\EventEmitter;
+use Exception;
+use Fossibot\Cache\DeviceCache;
+use Fossibot\Cache\TokenCache;
+use Fossibot\Config;
+use Fossibot\ValueObjects\Device;
+use Fossibot\ValueObjects\DeviceInfo;
+use Psr\Http\Message\ResponseInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use Random\RandomException;
+use React\Dns\Resolver\Factory;
 use React\EventLoop\LoopInterface;
+use React\EventLoop\TimerInterface;
+use React\Http\Browser;
 use React\Promise\PromiseInterface;
+use React\Socket\Connector;
+use RuntimeException;
+use Throwable;
+
+use function React\Promise\reject;
+use function React\Promise\resolve;
 
 /**
  * Async MQTT client for Fossibot Cloud connection.
@@ -42,7 +60,7 @@ class AsyncCloudClient extends EventEmitter
     private int $reconnectAttempts = 0;
     private int $maxReconnectAttempts = 10;
     private array $backoffDelays = [5, 10, 15, 30, 45, 60]; // seconds
-    private ?\React\EventLoop\TimerInterface $reconnectTimer = null;
+    private ?TimerInterface $reconnectTimer = null;
 
     // Token expiry tracking
     private ?int $mqttTokenExpiresAt = null;
@@ -58,11 +76,11 @@ class AsyncCloudClient extends EventEmitter
     private string $deviceId;
 
     // HTTP Browser (must persist to prevent GC cleanup during async requests)
-    private ?\React\Http\Browser $browser = null;
+    private ?Browser $browser = null;
 
     // Token & Device Cache
-    private ?\Fossibot\Cache\TokenCache $tokenCache = null;
-    private ?\Fossibot\Cache\DeviceCache $deviceCache = null;
+    private ?TokenCache $tokenCache = null;
+    private ?DeviceCache $deviceCache = null;
 
     public function __construct(
         string $email,
@@ -80,7 +98,7 @@ class AsyncCloudClient extends EventEmitter
     /**
      * Set token cache (optional).
      */
-    public function setTokenCache(\Fossibot\Cache\TokenCache $cache): void
+    public function setTokenCache(TokenCache $cache): void
     {
         $this->tokenCache = $cache;
     }
@@ -88,7 +106,7 @@ class AsyncCloudClient extends EventEmitter
     /**
      * Set device cache (optional).
      */
-    public function setDeviceCache(\Fossibot\Cache\DeviceCache $cache): void
+    public function setDeviceCache(DeviceCache $cache): void
     {
         $this->deviceCache = $cache;
     }
@@ -97,6 +115,8 @@ class AsyncCloudClient extends EventEmitter
      * Connect to Fossibot Cloud (async).
      *
      * @return PromiseInterface Resolves when connected
+     * @throws Exception
+     * @throws RandomException
      */
     public function connect(): PromiseInterface
     {
@@ -106,31 +126,32 @@ class AsyncCloudClient extends EventEmitter
 
         // Phase 1: Authenticate (HTTP tokens only, Stages 1-3)
         return $this->authenticate()
-            ->then(function() {
+            ->then(function (): PromiseInterface {
                 // Phase 2: Discover devices (HTTP API)
                 return $this->discoverDevices();
             })
-            ->then(function() {
+            ->then(function (): PromiseInterface {
                 // Phase 3: Connect MQTT (via AsyncMqttClient with WebSocket transport)
                 return $this->connectMqtt();
             })
-            ->then(function() {
+            ->then(function (): PromiseInterface {
                 // MQTT connected, set flag before subscribing
                 $this->connected = true;
 
                 // Phase 4: Subscribe to device topics
                 return $this->subscribeToDeviceTopics();
             })
-            ->then(function() {
+            ->then(function (): PromiseInterface {
                 $this->emit('connect');
                 $this->logger->info('AsyncCloudClient connected successfully');
+                return resolve(null);
             })
-            ->otherwise(function(\Exception $e) {
+            ->catch(function (Exception $e): PromiseInterface {
                 $this->logger->error('AsyncCloudClient connect failed', [
                     'error' => $e->getMessage()
                 ]);
                 $this->emit('error', [$e]);
-                throw $e;
+                return reject($e);
             });
     }
 
@@ -147,14 +168,15 @@ class AsyncCloudClient extends EventEmitter
         // Disconnect MQTT client
         if ($this->mqttClient !== null) {
             return $this->mqttClient->disconnect()
-                ->then(function() {
+                ->then(function (): PromiseInterface {
                     $this->mqttClient = null;
                     $this->emit('disconnect');
+                    return resolve(null);
                 });
         }
 
         $this->emit('disconnect');
-        return \React\Promise\resolve(null);
+        return resolve(null);
     }
 
     /**
@@ -162,6 +184,8 @@ class AsyncCloudClient extends EventEmitter
      *
      * @param bool $forceReauth Force Tier 2 (full re-auth) immediately
      * @return PromiseInterface
+     * @throws Exception
+     * @throws RandomException
      */
     public function reconnect(bool $forceReauth = false): PromiseInterface
     {
@@ -169,7 +193,7 @@ class AsyncCloudClient extends EventEmitter
             $this->logger->debug('Reconnection already in progress', [
                 'email' => $this->email
             ]);
-            return \React\Promise\resolve();
+            return resolve(null);
         }
 
         $this->reconnecting = true;
@@ -190,18 +214,14 @@ class AsyncCloudClient extends EventEmitter
         // Tier 1: Simple reconnect (unless forceReauth)
         if (!$forceReauth && $this->hasValidTokens()) {
             return $this->attemptSimpleReconnect()
-                ->then(
-                    fn() => $this->onReconnectSuccess(),
-                    fn($error) => $this->onReconnectFailure($error, false)
-                );
+                ->then(fn(): PromiseInterface => $this->onReconnectSuccess())
+                ->catch(fn($error): PromiseInterface => $this->onReconnectFailure($error, false));
         }
 
         // Tier 2: Full re-authentication
         return $this->attemptFullReauth()
-            ->then(
-                fn() => $this->onReconnectSuccess(),
-                fn($error) => $this->onReconnectFailure($error, true)
-            );
+            ->then(fn(): PromiseInterface => $this->onReconnectSuccess())
+            ->catch(fn($error): PromiseInterface => $this->onReconnectFailure($error, true));
     }
 
     /**
@@ -228,7 +248,7 @@ class AsyncCloudClient extends EventEmitter
     public function subscribe(string $topic, int $qos = 0): PromiseInterface
     {
         if (!$this->connected || $this->mqttClient === null) {
-            throw new \RuntimeException('Cannot subscribe: not connected');
+            throw new RuntimeException('Cannot subscribe: not connected');
         }
 
         $this->logger->debug('Subscribing to topic', ['topic' => $topic]);
@@ -241,7 +261,7 @@ class AsyncCloudClient extends EventEmitter
     public function publish(string $topic, string $payload, int $qos = 1): PromiseInterface
     {
         if (!$this->connected || $this->mqttClient === null) {
-            throw new \RuntimeException('Cannot publish: not connected');
+            throw new RuntimeException('Cannot publish: not connected');
         }
 
         $this->logger->debug('Publishing to topic', [
@@ -273,7 +293,7 @@ class AsyncCloudClient extends EventEmitter
 
         // Reconnect with existing tokens
         return $this->connectMqtt()
-            ->then(fn() => $this->resubscribeToDevices());
+            ->then(fn(): PromiseInterface => $this->resubscribeToDevices());
     }
 
     /**
@@ -296,14 +316,14 @@ class AsyncCloudClient extends EventEmitter
 
         // Full authentication flow (same as initial connect())
         return $this->authenticate()
-            ->then(fn() => $this->connectMqtt())
-            ->then(fn() => $this->discoverDevices());
+            ->then(fn(): PromiseInterface => $this->connectMqtt())
+            ->then(fn(): PromiseInterface => $this->discoverDevices());
     }
 
     /**
      * Reconnection succeeded - reset state.
      */
-    private function onReconnectSuccess(): void
+    private function onReconnectSuccess(): PromiseInterface
     {
         $this->connected = true;
         $this->reconnecting = false;
@@ -314,6 +334,8 @@ class AsyncCloudClient extends EventEmitter
         ]);
 
         $this->emit('reconnect');
+
+        return resolve(null);
     }
 
     /**
@@ -322,7 +344,7 @@ class AsyncCloudClient extends EventEmitter
      * @param \Throwable $error The error that caused failure
      * @param bool $wasReauth Whether this was a Tier 2 (full reauth) attempt
      */
-    private function onReconnectFailure(\Throwable $error, bool $wasReauth): void
+    private function onReconnectFailure(Throwable $error, bool $wasReauth): PromiseInterface
     {
         $this->reconnecting = false;
 
@@ -335,7 +357,7 @@ class AsyncCloudClient extends EventEmitter
             ]);
 
             $this->emit('error', [$error]);
-            return;
+            return reject($error);
         }
 
         // Determine backoff delay
@@ -351,7 +373,7 @@ class AsyncCloudClient extends EventEmitter
         ]);
 
         // Tier 3: Schedule retry with exponential backoff
-        $this->reconnectTimer = $this->loop->addTimer($delay, function() use ($wasReauth) {
+        $this->reconnectTimer = $this->loop->addTimer($delay, function () use ($wasReauth) {
             $this->reconnectTimer = null;
 
             // If simple reconnect failed, try full reauth next time
@@ -361,6 +383,8 @@ class AsyncCloudClient extends EventEmitter
         });
 
         $this->emit('reconnect_scheduled', [$delay]);
+
+        return resolve(null);
     }
 
     /**
@@ -431,17 +455,9 @@ class AsyncCloudClient extends EventEmitter
             $this->subscribe($topic);
         }
 
-        return \React\Promise\resolve();
+        return resolve(null);
     }
 
-    /**
-     * Performs 3-stage authentication (async).
-     *
-     * Authenticates with Fossibot Cloud API and acquires all required tokens.
-     * This replaces the synchronous Connection::authenticateOnly() call.
-     *
-     * @return PromiseInterface Resolves when all tokens acquired
-     */
     /**
      * Connect MQTT client using AsyncMqttClient with WebSocket transport.
      */
@@ -487,20 +503,18 @@ class AsyncCloudClient extends EventEmitter
                 $this->clearAuthTokens();
 
                 // Invalidate cached tokens to force fresh auth
-                if ($this->tokenCache !== null) {
-                    $this->tokenCache->invalidate($this->email);
-                }
+                $this->tokenCache?->invalidate($this->email);
             }
 
             // Auto-reconnect if not manually disconnected
             if ($this->running && !$this->reconnecting) {
-                $this->loop->futureTick(function() {
-                    $this->reconnect(false); // Try Tier 1 first
+                $this->loop->futureTick(function (): void {
+                    $this->reconnect(); // Try Tier 1 first
                 });
             }
         });
 
-        $this->mqttClient->on('error', function (\Exception $e) {
+        $this->mqttClient->on('error', function (Exception $e) {
             $this->logger->error('MQTT client error', ['error' => $e->getMessage()]);
             $this->emit('error', [$e]);
         });
@@ -509,6 +523,13 @@ class AsyncCloudClient extends EventEmitter
         return $this->mqttClient->connect();
     }
 
+    /**
+     * Performs 3-stage authentication (async).
+     *
+     * @return PromiseInterface
+     * @throws Exception
+     * @throws RandomException
+     */
     private function authenticate(): PromiseInterface
     {
         $this->logger->info('Starting async authentication', [
@@ -536,7 +557,7 @@ class AsyncCloudClient extends EventEmitter
                 $this->mqttToken = $s3Token->token;
                 $this->loginTokenExpiresAt = $s2Token->expiresAt;
                 $this->mqttTokenExpiresAt = $s3Token->expiresAt;
-                return \React\Promise\resolve(null);
+                return resolve(null);
             }
 
             // Partial cache hit - log what we're skipping
@@ -554,90 +575,89 @@ class AsyncCloudClient extends EventEmitter
         }
 
         // Partial or full cache miss - execute auth stages
-        $promise = \React\Promise\resolve(null);
+        $promise = resolve(null);
 
         // Stage 1: Anonymous Token (always fetch fresh, TTL too short)
-        $promise = $promise->then(function() {
+        $promise = $promise->then(function (): PromiseInterface {
             $this->logger->debug('Fetching fresh Stage 1 token');
-            return $this->stage1_getAnonymousToken($this->browser);
-        })->then(function(string $anonToken) {
+            return $this->s1GetAnonymousToken($this->browser);
+        })->then(function (string $anonToken): PromiseInterface {
             $this->anonymousToken = $anonToken;
             $this->logger->info('Stage 1 completed: Anonymous token acquired');
 
             // Cache S1 token (even though TTL is short, useful for quick restarts)
-            if ($this->tokenCache !== null) {
-                $this->tokenCache->saveToken(
-                    $this->email,
-                    's1_anonymous',
-                    $anonToken,
-                    time() + 540 // 9 minutes (10min TTL - 1min safety)
-                );
-            }
-            return null;
+            $this->tokenCache?->saveToken(
+                $this->email,
+                's1_anonymous',
+                $anonToken,
+                time() + 540 // 9 minutes (10min TTL - 1min safety)
+            );
+            return resolve(null);
         });
 
         // Stage 2: Login Token (skip if cached)
         if ($this->tokenCache === null || $this->tokenCache->getCachedToken($this->email, 's2_login') === null) {
-            $promise = $promise->then(function() {
+            $promise = $promise->then(function (): PromiseInterface {
                 $this->logger->debug('Fetching fresh Stage 2 token');
-                return $this->stage2_login($this->browser, $this->anonymousToken);
-            })->then(function(string $loginToken) {
+                return $this->s2Login($this->browser, $this->anonymousToken);
+            })->then(function (string $loginToken): PromiseInterface {
                 $this->loginToken = $loginToken;
                 $this->logger->info('Stage 2 completed: Login token acquired');
 
                 // Cache S2 token (very long TTL)
-                if ($this->tokenCache !== null) {
-                    // Login token expires in ~14 years, use far future timestamp
-                    $expiresAt = time() + (14 * 365 * 86400); // 14 years
-                    $this->loginTokenExpiresAt = $expiresAt;
+                // Login token expires in ~14 years, use far future timestamp
+                $expiresAt = time() + (14 * 365 * 86400); // 14 years
+                $this->loginTokenExpiresAt = $expiresAt;
 
-                    $this->tokenCache->saveToken(
-                        $this->email,
-                        's2_login',
-                        $loginToken,
-                        $expiresAt
-                    );
-                }
-                return null;
+                $this->tokenCache?->saveToken(
+                    $this->email,
+                    's2_login',
+                    $loginToken,
+                    $expiresAt
+                );
+                return resolve(null);
             });
         } else {
             // Use cached S2 token
-            $promise = $promise->then(function() {
+            $promise = $promise->then(function (): PromiseInterface {
                 $cachedS2 = $this->tokenCache->getCachedToken($this->email, 's2_login');
                 $this->loginToken = $cachedS2->token;
                 $this->loginTokenExpiresAt = $cachedS2->expiresAt;
                 $this->logger->info('Using cached Stage 2 token', [
                     'ttl_remaining' => $cachedS2->getTtlRemaining()
                 ]);
-                return null;
+                return resolve(null);
             });
         }
 
         // Stage 3: MQTT Token (always fetch fresh if not cached)
         if ($this->tokenCache === null || $this->tokenCache->getCachedToken($this->email, 's3_mqtt') === null) {
-            $promise = $promise->then(function() {
+            $promise = $promise->then(function (): PromiseInterface {
                 $this->logger->debug('Fetching fresh Stage 3 token');
-                return $this->stage3_getMqttToken($this->browser, $this->anonymousToken, $this->loginToken);
-            })->then(function(string $mqttToken) {
+                return $this->s3GetMqttToken($this->browser, $this->anonymousToken, $this->loginToken);
+            })->then(function (string $mqttToken): PromiseInterface {
                 $this->mqttToken = $mqttToken;
+                $expiresFormatted = $this->mqttTokenExpiresAt !== null
+                    ? date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
+                    : 'unknown';
                 $this->logger->info('Stage 3 completed: MQTT token acquired', [
-                    'expires_at' => $this->mqttTokenExpiresAt ? date('Y-m-d H:i:s', $this->mqttTokenExpiresAt) : 'unknown'
+                    'expires_at' => $expiresFormatted
                 ]);
 
                 // Cache S3 token
-                if ($this->tokenCache !== null && $this->mqttTokenExpiresAt !== null) {
-                    $this->tokenCache->saveToken(
+                if ($this->mqttTokenExpiresAt !== null) {
+                    $this->tokenCache?->saveToken(
                         $this->email,
                         's3_mqtt',
                         $mqttToken,
                         $this->mqttTokenExpiresAt
                     );
                 }
-                return null;
+                return resolve(null);
             });
         } else {
             // Use cached S3 token
-            $promise = $promise->then(function() {
+            $promise = $promise->then(function (): PromiseInterface {
                 $cachedS3 = $this->tokenCache->getCachedToken($this->email, 's3_mqtt');
                 $this->mqttToken = $cachedS3->token;
                 $this->mqttTokenExpiresAt = $cachedS3->expiresAt;
@@ -645,7 +665,7 @@ class AsyncCloudClient extends EventEmitter
                     'ttl_remaining' => $cachedS3->getTtlRemaining(),
                     'expires_at' => date('Y-m-d H:i:s', $cachedS3->expiresAt)
                 ]);
-                return null;
+                return resolve(null);
             });
         }
 
@@ -673,7 +693,7 @@ class AsyncCloudClient extends EventEmitter
                     'cache_age' => $this->deviceCache->getAge($this->email)
                 ]);
                 $this->devices = $cachedDevices;
-                return \React\Promise\resolve(null);
+                return resolve(null);
             }
         }
 
@@ -688,15 +708,13 @@ class AsyncCloudClient extends EventEmitter
         }
 
         return $this->fetchDevices($this->browser, $this->anonymousToken, $this->loginToken)
-            ->then(function(array $devices) {
+            ->then(function (array $devices): PromiseInterface {
                 $this->devices = $devices;
 
                 // Cache device list
-                if ($this->deviceCache !== null) {
-                    $this->deviceCache->saveDevices($this->email, $devices);
-                }
+                $this->deviceCache?->saveDevices($this->email, $devices);
 
-                return null;
+                return resolve(null);
             });
     }
 
@@ -712,9 +730,7 @@ class AsyncCloudClient extends EventEmitter
         ]);
 
         // Invalidate cache
-        if ($this->deviceCache !== null) {
-            $this->deviceCache->invalidate($this->email);
-        }
+        $this->deviceCache?->invalidate($this->email);
 
         // Fetch fresh
         return $this->discoverDevices();
@@ -737,12 +753,12 @@ class AsyncCloudClient extends EventEmitter
                 'device_count' => count($this->devices)
             ]);
 
-            return \React\Promise\resolve(null);
-        } catch (\Exception $e) {
+            return resolve(null);
+        } catch (Exception $e) {
             $this->logger->error('Topic subscription failed', [
                 'error' => $e->getMessage()
             ]);
-            return \React\Promise\reject($e);
+            return reject($e);
         }
     }
 
@@ -772,26 +788,26 @@ class AsyncCloudClient extends EventEmitter
      * @param \React\Http\Browser $browser HTTP client
      * @return PromiseInterface Resolves with anonymous token string
      */
-    private function stage1_getAnonymousToken(\React\Http\Browser $browser): PromiseInterface
+    private function s1GetAnonymousToken(Browser $browser): PromiseInterface
     {
         $this->logger->debug('Stage 1: Requesting anonymous token');
 
         $requestData = [
             'method' => 'serverless.auth.user.anonymousAuthorize',
             'params' => '{}',
-            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'spaceId' => Config::getSpaceId(),
             'timestamp' => (int)(microtime(true) * 1000),
         ];
 
         $signature = $this->generateSignature($requestData);
 
         $this->logger->debug('Stage 1: About to call $browser->post()', [
-            'url' => \Fossibot\Config::getApiEndpoint(),
+            'url' => Config::getApiEndpoint(),
             'browser_class' => get_class($browser),
         ]);
 
         $promise = $browser->post(
-            \Fossibot\Config::getApiEndpoint(),
+            Config::getApiEndpoint(),
             [
                 'Content-Type' => 'application/json',
                 'x-serverless-sign' => $signature,
@@ -804,7 +820,7 @@ class AsyncCloudClient extends EventEmitter
         ]);
 
         return $promise->then(
-            function (\Psr\Http\Message\ResponseInterface $response) {
+            function (ResponseInterface $response) {
                 $this->logger->debug('Stage 1: Then handler called (success)', [
                     'status' => $response->getStatusCode(),
                 ]);
@@ -813,22 +829,24 @@ class AsyncCloudClient extends EventEmitter
                 $data = json_decode($body, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Stage 1: JSON decode error - ' . json_last_error_msg());
+                    throw new RuntimeException('Stage 1: JSON decode error - ' . json_last_error_msg());
                 }
 
                 if (!isset($data['data']['accessToken'])) {
-                    throw new \RuntimeException('Stage 1: Missing accessToken in response');
+                    throw new RuntimeException('Stage 1: Missing accessToken in response');
                 }
 
                 $token = $data['data']['accessToken'];
+                $expiresIn = $data['data']['expiresInSecond'] ?? 'unknown';
                 $this->logger->debug('Stage 1 completed', [
                     'token_length' => strlen($token),
-                    'expires_in' => $data['data']['expiresInSecond'] ?? 'unknown',
+                    'expires_in' => $expiresIn,
                 ]);
 
                 return $token;
-            },
-            function (\Exception $e) {
+            }
+        )->catch(
+            function (Exception $e): void {
                 $this->logger->debug('Stage 1: Rejection handler called', [
                     'error_class' => get_class($e),
                 ]);
@@ -837,7 +855,7 @@ class AsyncCloudClient extends EventEmitter
                     'error' => $e->getMessage(),
                     'type' => get_class($e),
                 ]);
-                throw new \RuntimeException('Stage 1 (Anonymous Token) failed: ' . $e->getMessage(), 0, $e);
+                throw new RuntimeException('Stage 1 (Anonymous Token) failed: ' . $e->getMessage(), 0, $e);
             }
         );
     }
@@ -849,11 +867,11 @@ class AsyncCloudClient extends EventEmitter
      * @param string $anonymousToken Token from Stage 1
      * @return PromiseInterface Resolves with login token string
      */
-    private function stage2_login(\React\Http\Browser $browser, string $anonymousToken): PromiseInterface
+    private function s2Login(Browser $browser, string $anonymousToken): PromiseInterface
     {
         $this->logger->debug('Stage 2: Logging in', ['email' => $this->email]);
 
-        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'user/pub/login',
@@ -872,7 +890,7 @@ class AsyncCloudClient extends EventEmitter
                 'functionTarget' => 'router',
                 'functionArgs' => $functionArgs,
             ]),
-            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'spaceId' => Config::getSpaceId(),
             'timestamp' => (int)(microtime(true) * 1000),
             'token' => $anonymousToken,
         ];
@@ -880,23 +898,23 @@ class AsyncCloudClient extends EventEmitter
         $signature = $this->generateSignature($requestData);
 
         return $browser->post(
-            \Fossibot\Config::getApiEndpoint(),
+            Config::getApiEndpoint(),
             [
                 'Content-Type' => 'application/json',
                 'x-serverless-sign' => $signature,
             ],
             json_encode($requestData)
         )->then(
-            function (\Psr\Http\Message\ResponseInterface $response) {
+            function (ResponseInterface $response) {
                 $body = (string)$response->getBody();
                 $data = json_decode($body, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Stage 2: JSON decode error - ' . json_last_error_msg());
+                    throw new RuntimeException('Stage 2: JSON decode error - ' . json_last_error_msg());
                 }
 
                 if (!isset($data['data']['token'])) {
-                    throw new \RuntimeException('Stage 2: Missing token in response');
+                    throw new RuntimeException('Stage 2: Missing token in response');
                 }
 
                 $token = $data['data']['token'];
@@ -911,14 +929,15 @@ class AsyncCloudClient extends EventEmitter
                 }
 
                 return $token;
-            },
-            function (\Exception $e) {
+            }
+        )->catch(
+            function (Exception $e): void {
                 $this->logger->error('Stage 2 failed', [
                     'error' => $e->getMessage(),
                     'type' => get_class($e),
                     'email' => $this->email,
                 ]);
-                throw new \RuntimeException('Stage 2 (Login) failed: ' . $e->getMessage(), 0, $e);
+                throw new RuntimeException('Stage 2 (Login) failed: ' . $e->getMessage(), 0, $e);
             }
         );
     }
@@ -931,11 +950,11 @@ class AsyncCloudClient extends EventEmitter
      * @param string $loginToken Token from Stage 2
      * @return PromiseInterface Resolves with MQTT token string
      */
-    private function stage3_getMqttToken(\React\Http\Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
+    private function s3GetMqttToken(Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
     {
         $this->logger->debug('Stage 3: Requesting MQTT token');
 
-        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'common/emqx.getAccessToken',
@@ -952,7 +971,7 @@ class AsyncCloudClient extends EventEmitter
                 'functionTarget' => 'router',
                 'functionArgs' => $functionArgs,
             ]),
-            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'spaceId' => Config::getSpaceId(),
             'timestamp' => (int)(microtime(true) * 1000),
             'token' => $anonymousToken,
         ];
@@ -960,44 +979,46 @@ class AsyncCloudClient extends EventEmitter
         $signature = $this->generateSignature($requestData);
 
         return $browser->post(
-            \Fossibot\Config::getApiEndpoint(),
+            Config::getApiEndpoint(),
             [
                 'Content-Type' => 'application/json',
                 'x-serverless-sign' => $signature,
             ],
             json_encode($requestData)
         )->then(
-            function (\Psr\Http\Message\ResponseInterface $response) {
+            function (ResponseInterface $response) {
                 $body = (string)$response->getBody();
                 $data = json_decode($body, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Stage 3: JSON decode error - ' . json_last_error_msg());
+                    throw new RuntimeException('Stage 3: JSON decode error - ' . json_last_error_msg());
                 }
 
                 if (!isset($data['data']['access_token'])) {
-                    throw new \RuntimeException('Stage 3: Missing access_token in response');
+                    throw new RuntimeException('Stage 3: Missing access_token in response');
                 }
 
                 $token = $data['data']['access_token'];
                 $expiry = $this->extractJwtExpiry($token);
 
+                $expiresFormatted = $expiry !== null ? date('Y-m-d H:i:s', $expiry) : 'unknown';
                 $this->logger->debug('Stage 3 completed', [
                     'token_length' => strlen($token),
-                    'expires_at' => $expiry ? date('Y-m-d H:i:s', $expiry) : 'unknown',
+                    'expires_at' => $expiresFormatted,
                 ]);
 
                 // Store MQTT token expiry
                 $this->mqttTokenExpiresAt = $expiry;
 
                 return $token;
-            },
-            function (\Exception $e) {
+            }
+        )->catch(
+            function (Exception $e): void {
                 $this->logger->error('Stage 3 failed', [
                     'error' => $e->getMessage(),
                     'type' => get_class($e),
                 ]);
-                throw new \RuntimeException('Stage 3 (MQTT Token) failed: ' . $e->getMessage(), 0, $e);
+                throw new RuntimeException('Stage 3 (MQTT Token) failed: ' . $e->getMessage(), 0, $e);
             }
         );
     }
@@ -1010,11 +1031,11 @@ class AsyncCloudClient extends EventEmitter
      * @param string $loginToken Token from Stage 2
      * @return PromiseInterface Resolves with Device[] array
      */
-    private function fetchDevices(\React\Http\Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
+    private function fetchDevices(Browser $browser, string $anonymousToken, string $loginToken): PromiseInterface
     {
         $this->logger->debug('Fetching device list');
 
-        $deviceInfo = new \Fossibot\ValueObjects\DeviceInfo(deviceId: $this->deviceId);
+        $deviceInfo = new DeviceInfo(deviceId: $this->deviceId);
 
         $functionArgs = [
             '$url' => 'client/device/kh/getList',
@@ -1033,7 +1054,7 @@ class AsyncCloudClient extends EventEmitter
                 'functionTarget' => 'router',
                 'functionArgs' => $functionArgs,
             ]),
-            'spaceId' => \Fossibot\Config::getSpaceId(),
+            'spaceId' => Config::getSpaceId(),
             'timestamp' => (int)(microtime(true) * 1000),
             'token' => $anonymousToken,
         ];
@@ -1041,19 +1062,19 @@ class AsyncCloudClient extends EventEmitter
         $signature = $this->generateSignature($requestData);
 
         return $browser->post(
-            \Fossibot\Config::getApiEndpoint(),
+            Config::getApiEndpoint(),
             [
                 'Content-Type' => 'application/json',
                 'x-serverless-sign' => $signature,
             ],
             json_encode($requestData)
         )->then(
-            function (\Psr\Http\Message\ResponseInterface $response) {
+            function (ResponseInterface $response) {
                 $body = (string)$response->getBody();
                 $data = json_decode($body, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Device list: JSON decode error - ' . json_last_error_msg());
+                    throw new RuntimeException('Device list: JSON decode error - ' . json_last_error_msg());
                 }
 
                 $this->logger->debug('Device list API response', [
@@ -1064,7 +1085,7 @@ class AsyncCloudClient extends EventEmitter
                 ]);
 
                 if (!isset($data['data'])) {
-                    throw new \RuntimeException('Device list: Missing data field in response');
+                    throw new RuntimeException('Device list: Missing data field in response');
                 }
 
                 $rows = $data['data']['rows'] ?? [];
@@ -1080,8 +1101,8 @@ class AsyncCloudClient extends EventEmitter
                 $devices = [];
                 foreach ($rows as $deviceData) {
                     try {
-                        $devices[] = \Fossibot\ValueObjects\Device::fromApiResponse($deviceData);
-                    } catch (\Exception $e) {
+                        $devices[] = Device::fromApiResponse($deviceData);
+                    } catch (Exception $e) {
                         $this->logger->warning('Failed to parse device', [
                             'error' => $e->getMessage(),
                             'device_data' => $deviceData,
@@ -1094,13 +1115,14 @@ class AsyncCloudClient extends EventEmitter
                 ]);
 
                 return $devices;
-            },
-            function (\Exception $e) {
+            }
+        )->catch(
+            function (Exception $e): void {
                 $this->logger->error('Device discovery failed', [
                     'error' => $e->getMessage(),
                     'type' => get_class($e),
                 ]);
-                throw new \RuntimeException('Device discovery failed: ' . $e->getMessage(), 0, $e);
+                throw new RuntimeException('Device discovery failed: ' . $e->getMessage(), 0, $e);
             }
         );
     }
@@ -1114,14 +1136,14 @@ class AsyncCloudClient extends EventEmitter
      *
      * Configures DNS resolver and socket connector for reliable HTTP requests.
      */
-    private function createBrowser(): \React\Http\Browser
+    private function createBrowser(): Browser
     {
         $this->logger->debug('createBrowser: Starting', [
             'loop_class' => get_class($this->loop),
         ]);
 
         // Configure DNS resolver to use Google DNS (8.8.8.8)
-        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
+        $dnsResolverFactory = new Factory();
         $dns = $dnsResolverFactory->createCached('8.8.8.8', $this->loop);
 
         $this->logger->debug('createBrowser: DNS resolver created', [
@@ -1138,7 +1160,7 @@ class AsyncCloudClient extends EventEmitter
         ];
 
         // Create socket connector with TLS context, DNS resolver and timeout
-        $socketConnector = new \React\Socket\Connector($context + [
+        $socketConnector = new Connector($context + [
             'dns' => $dns,
             'timeout' => 15.0,
         ]);
@@ -1148,7 +1170,7 @@ class AsyncCloudClient extends EventEmitter
         ]);
 
         // Create Browser with configured connector
-        $browser = new \React\Http\Browser($socketConnector, $this->loop);
+        $browser = new Browser($socketConnector, $this->loop);
 
         $this->logger->debug('createBrowser: Browser created', [
             'browser_class' => get_class($browser),
@@ -1176,7 +1198,7 @@ class AsyncCloudClient extends EventEmitter
 
         $queryString = implode('&', $items);
 
-        return hash_hmac('md5', $queryString, \Fossibot\Config::getClientSecret());
+        return hash_hmac('md5', $queryString, Config::getClientSecret());
     }
 
     /**
@@ -1185,6 +1207,7 @@ class AsyncCloudClient extends EventEmitter
      * Emulates Android device identifier for API compatibility.
      *
      * @return string 32-character hexadecimal device ID
+     * @throws RandomException
      */
     private function generateDeviceId(): string
     {

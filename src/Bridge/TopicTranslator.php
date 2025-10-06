@@ -1,7 +1,10 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Fossibot\Bridge;
+
+use InvalidArgumentException;
 
 /**
  * Translates MQTT topics between Fossibot Cloud and local broker.
@@ -26,7 +29,7 @@ class TopicTranslator
         $mac = $this->extractMacFromCloudTopic($cloudTopic);
 
         if ($mac === null) {
-            throw new \InvalidArgumentException("Cannot extract MAC from cloud topic: $cloudTopic");
+            throw new InvalidArgumentException("Cannot extract MAC from cloud topic: $cloudTopic");
         }
 
         // All device response topics → state topic
@@ -52,7 +55,7 @@ class TopicTranslator
         $mac = $this->extractMacFromBrokerTopic($brokerTopic);
 
         if ($mac === null) {
-            throw new \InvalidArgumentException("Cannot extract MAC from broker topic: $brokerTopic");
+            throw new InvalidArgumentException("Cannot extract MAC from broker topic: $brokerTopic");
         }
 
         // Commands → client request topic
@@ -60,7 +63,7 @@ class TopicTranslator
             return "$mac/client/request/data";
         }
 
-        throw new \InvalidArgumentException("Unknown broker topic pattern: $brokerTopic");
+        throw new InvalidArgumentException("Unknown broker topic pattern: $brokerTopic");
     }
 
     /**

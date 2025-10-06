@@ -10,6 +10,13 @@ use React\EventLoop\LoopInterface;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
 use React\Socket\ConnectionInterface;
+use React\EventLoop\TimerInterface;
+
+use function React\Promise\resolve;
+use function React\Promise\reject;
+
+use RuntimeException;
+use Exception;
 
 /**
  * Generic async MQTT client using ReactPHP.
@@ -33,7 +40,7 @@ class AsyncMqttClient extends EventEmitter
     private int $mqttPacketId = 1;
     private array $pendingSubscriptions = [];
     private array $activeSubscriptions = [];
-    private ?\React\EventLoop\TimerInterface $keepAliveTimer = null;
+    private ?TimerInterface $keepAliveTimer = null;
 
     // Connection parameters
     private string $clientId;
@@ -109,7 +116,7 @@ class AsyncMqttClient extends EventEmitter
 
         $this->emit('disconnect');
 
-        return \React\Promise\resolve(null);
+        return resolve(null);
     }
 
     /**
@@ -126,8 +133,8 @@ class AsyncMqttClient extends EventEmitter
     public function publish(string $topic, string $payload, int $qos = 0): PromiseInterface
     {
         if (!$this->connected || $this->connection === null) {
-            return \React\Promise\reject(
-                new \RuntimeException('Cannot publish: not connected')
+            return reject(
+                new RuntimeException('Cannot publish: not connected')
             );
         }
 
@@ -152,7 +159,7 @@ class AsyncMqttClient extends EventEmitter
             'qos' => $qos
         ]);
 
-        return \React\Promise\resolve(null);
+        return resolve(null);
     }
 
     /**
@@ -161,8 +168,8 @@ class AsyncMqttClient extends EventEmitter
     public function subscribe(string $topic, int $qos = 0): PromiseInterface
     {
         if (!$this->connected || $this->connection === null) {
-            return \React\Promise\reject(
-                new \RuntimeException('Cannot subscribe: not connected')
+            return reject(
+                new RuntimeException('Cannot subscribe: not connected')
             );
         }
 
@@ -185,7 +192,7 @@ class AsyncMqttClient extends EventEmitter
             'qos' => $qos
         ]);
 
-        return \React\Promise\resolve(null);
+        return resolve(null);
     }
 
     // --- Private Methods ---
@@ -202,7 +209,7 @@ class AsyncMqttClient extends EventEmitter
             $this->emit('disconnect');
         });
 
-        $this->connection->on('error', function (\Exception $e) {
+        $this->connection->on('error', function (Exception $e) {
             $this->logger->error('MQTT connection error', [
                 'error' => $e->getMessage()
             ]);
@@ -230,7 +237,7 @@ class AsyncMqttClient extends EventEmitter
                 $this->logger->info('MQTT connection accepted');
                 $deferred->resolve(null);
             } else {
-                $error = new \RuntimeException("MQTT connection refused: code $returnCode");
+                $error = new RuntimeException("MQTT connection refused: code $returnCode");
                 $this->logger->error('MQTT connection refused', ['code' => $returnCode]);
                 $deferred->reject($error);
             }
@@ -414,7 +421,7 @@ class AsyncMqttClient extends EventEmitter
             $index++;
 
             if ($multiplier > 128 * 128 * 128) {
-                throw new \RuntimeException('Malformed remaining length');
+                throw new RuntimeException('Malformed remaining length');
             }
         } while (($byte & 0x80) !== 0);
 
