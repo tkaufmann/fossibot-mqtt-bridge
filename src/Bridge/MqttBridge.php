@@ -8,7 +8,6 @@ use Exception;
 use Fossibot\Cache\DeviceCache;
 use Fossibot\Cache\TokenCache;
 use Fossibot\Commands\CommandResponseType;
-use Fossibot\Commands\ReadRegistersCommand;
 use Fossibot\Device\DeviceStateManager;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -763,17 +762,23 @@ class MqttBridge
                 $mac = $device->getMqttId();
 
                 try {
-                    // Create read settings command (read 80 registers starting from 0)
-                    $command = new ReadRegistersCommand(0, 80);
+                    // Pseudo-polling: Read current LED state and write it back unchanged
+                    // This triggers /client/04 response with fresh power values without changing anything
+                    $state = $this->deviceStateManager->getDeviceState($mac);
+
+                    // Get current LED state (OFF=0, ON=1)
+                    $currentLedValue = $state->ledOutput ? 1 : 0;
+
+                    // Write LED state back to itself (noop that triggers /client/04)
+                    $command = new WriteRegisterCommand(27, $currentLedValue);
                     $modbusPayload = $this->payloadTransformer->commandToModbus($command);
 
-                    // Publish to cloud
                     $cloudTopic = "$mac/client/request/data";
                     $client->publish($cloudTopic, $modbusPayload);
 
-                    $this->logger->debug('Polling device state', [
+                    $this->logger->debug('Polling device state (noop-write LED)', [
                         'mac' => $mac,
-                        'command' => $command->getDescription()
+                        'led_state' => $currentLedValue
                     ]);
                 } catch (Exception $e) {
                     $this->logger->error('Failed to poll device', [

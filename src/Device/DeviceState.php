@@ -71,7 +71,7 @@ class DeviceState
         }
 
         // Power values
-        // ONLY update from /client/04 - /client/data has cached/stale values (always 0)
+        // ONLY update from /client/04 - /client/data has cached/stale values
         if ($isImmediateResponse) {
             if (isset($registers[4])) {
                 $this->dcInputWatts = $registers[4]; // DC Input Power
