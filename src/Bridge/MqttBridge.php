@@ -8,6 +8,7 @@ use Exception;
 use Fossibot\Cache\DeviceCache;
 use Fossibot\Cache\TokenCache;
 use Fossibot\Commands\CommandResponseType;
+use Fossibot\Commands\WriteRegisterCommand;
 use Fossibot\Device\DeviceStateManager;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -65,6 +66,12 @@ class MqttBridge
     /** @var array<string, float> MAC => timestamp of last command sent */
     private array $lastCommandSent = [];
 
+    // Log throttling to prevent file I/O blocking
+    /** @var array<string, int> MAC => update count since last log */
+    private array $updateCountPerDevice = [];
+    /** @var array<string, int> MAC => timestamp of last info log */
+    private array $lastLogTimePerDevice = [];
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -105,6 +112,9 @@ class MqttBridge
 
         // Initialize health metrics
         $this->metrics = new BridgeMetrics();
+
+        // Connect metrics to state manager for spontaneous update tracking
+        $this->stateManager->setMetrics($this->metrics);
     }
 
     /**
@@ -427,15 +437,24 @@ class MqttBridge
                     fn() => $this->publishBridgeStatus()
                 );
 
-                // Setup device state polling timer (every 30s)
-                $this->pollingTimer = $this->loop->addPeriodicTimer(
-                    $this->config['bridge']['device_poll_interval'] ?? 30,
-                    fn() => $this->pollDeviceStates()
-                );
+                // Setup spontaneous update stats logging (every 60s)
+                $this->loop->addPeriodicTimer(60, function () {
+                    $this->logSpontaneousUpdateStats();
+                });
 
-                $this->logger->debug('Periodic timers started', [
+                // Polling disabled - device sends spontaneous updates every ~3 minutes
+                // Test results:
+                //   5s:  Rate-limited (no responses)
+                //   10s: Rate-limited (no responses)
+                //   30s: Works (4s response time)
+                // Conclusion: Rate-limit is ~20-25s, but spontaneous updates sufficient
+                //
+                // NOTE: Official app uses Bluetooth for real-time updates (not cloud MQTT)
+
+                $this->logger->info('Periodic timers started', [
                     'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
-                    'polling_interval' => $this->config['bridge']['device_poll_interval'] ?? 30
+                    'update_stats_interval' => 60,
+                    'polling' => 'disabled (spontaneous updates every ~3min)'
                 ]);
             })
             ->otherwise(function (Exception $e) {
@@ -566,9 +585,9 @@ class MqttBridge
             $state = $this->stateManager->getDeviceState($mac);
             $json = $this->payloadTransformer->stateToJson($state);
 
-            // Publish to broker
+            // Publish to broker (QoS 0 for performance - no PUBACK wait)
             $brokerTopic = $this->topicTranslator->cloudToBroker($topic);
-            $this->localBrokerClient->publish($brokerTopic, $json, 1);
+            $this->localBrokerClient->publish($brokerTopic, $json, 0);
 
             // Enhanced logging with source tracking
             $logData = [
@@ -597,7 +616,27 @@ class MqttBridge
                 $logData['update_type'] = $wasCommandTriggered ? 'COMMAND-TRIGGERED' : 'SPONTANEOUS';
             }
 
-            $this->logger->info('Device state updated', $logData);
+            // Throttle info-logging to prevent file I/O blocking during high-frequency updates
+            $this->updateCountPerDevice[$mac] = ($this->updateCountPerDevice[$mac] ?? 0) + 1;
+
+            $now = time();
+            $timeSinceLastLog = $now - ($this->lastLogTimePerDevice[$mac] ?? 0);
+
+            // Log at INFO level only every 5 seconds to reduce disk I/O
+            if ($timeSinceLastLog >= 5) {
+                $logData['updates_since_last_log'] = $this->updateCountPerDevice[$mac];
+                $this->logger->info('Device state updated', $logData);
+                $this->updateCountPerDevice[$mac] = 0;
+                $this->lastLogTimePerDevice[$mac] = $now;
+            } else {
+                // For troubleshooting: Log every update at DEBUG level (only when LOG_LEVEL=DEBUG)
+                $this->logger->debug('Device state updated (throttled)', [
+                    'mac' => $mac,
+                    'input' => $state->inputWatts . 'W',
+                    'output' => $state->outputWatts . 'W',
+                    'soc' => $state->soc . '%'
+                ]);
+            }
         } catch (Exception $e) {
             $this->logger->error('Error handling cloud message', [
                 'topic' => $topic,
@@ -751,6 +790,12 @@ class MqttBridge
             'cloud_clients' => count($this->cloudClients)
         ]);
 
+        // Guard: Don't poll if state manager not initialized yet
+        if ($this->stateManager === null) {
+            $this->logger->debug('Polling skipped: stateManager not ready');
+            return;
+        }
+
         $this->lastPollTime = microtime(true);
 
         foreach ($this->cloudClients as $client) {
@@ -764,21 +809,22 @@ class MqttBridge
                 try {
                     // Pseudo-polling: Read current LED state and write it back unchanged
                     // This triggers /client/04 response with fresh power values without changing anything
-                    $state = $this->deviceStateManager->getDeviceState($mac);
+                    $state = $this->stateManager->getDeviceState($mac);
 
                     // Get current LED state (OFF=0, ON=1)
                     $currentLedValue = $state->ledOutput ? 1 : 0;
 
                     // Write LED state back to itself (noop that triggers /client/04)
-                    $command = new WriteRegisterCommand(27, $currentLedValue);
+                    $command = new WriteRegisterCommand(27, $currentLedValue, CommandResponseType::IMMEDIATE);
                     $modbusPayload = $this->payloadTransformer->commandToModbus($command);
 
                     $cloudTopic = "$mac/client/request/data";
                     $client->publish($cloudTopic, $modbusPayload);
 
-                    $this->logger->debug('Polling device state (noop-write LED)', [
+                    $this->logger->info('TEST: LED noop command sent', [
                         'mac' => $mac,
-                        'led_state' => $currentLedValue
+                        'led_state' => $currentLedValue,
+                        'timestamp' => date('H:i:s')
                     ]);
                 } catch (Exception $e) {
                     $this->logger->error('Failed to poll device', [
@@ -817,5 +863,32 @@ class MqttBridge
             $this->config['bridge']['device_poll_interval'] ?? 30,
             fn() => $this->pollDeviceStates()
         );
+    }
+
+    /**
+     * Log spontaneous update statistics for all devices.
+     */
+    private function logSpontaneousUpdateStats(): void
+    {
+        $allStats = $this->metrics->getAllSpontaneousUpdateStats();
+
+        if (empty($allStats)) {
+            return;
+        }
+
+        foreach ($allStats as $mac => $stats) {
+            if ($stats['count'] === 0) {
+                continue;
+            }
+
+            $this->logger->info('Spontaneous update stats', [
+                'mac' => $mac,
+                'intervals_tracked' => $stats['count'],
+                'min_seconds' => $stats['min'],
+                'max_seconds' => $stats['max'],
+                'avg_seconds' => $stats['avg'],
+                'last_seconds' => $stats['last']
+            ]);
+        }
     }
 }

@@ -17,10 +17,11 @@ require __DIR__ . '/../vendor/autoload.php';
 define('PROJECT_ROOT', dirname(__DIR__));
 
 use Fossibot\Bridge\MqttBridge;
+use Fossibot\Bridge\AsyncFileHandler;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
-use Monolog\Handler\RotatingFileHandler;
 use Monolog\Formatter\LineFormatter;
+use React\EventLoop\Loop;
 
 // =============================================================================
 // CLI ARGUMENT PARSING
@@ -350,14 +351,9 @@ function createLogger(array $config): Logger
     $consoleHandler->setFormatter($consoleFormatter);
     $logger->pushHandler($consoleHandler);
 
-    // File handler (rotating, 7 days retention)
+    // File handler (async, non-blocking with ReactPHP, 7 days retention)
     $logFile = resolveProjectPath($config['daemon']['log_file']);
-
-    // Create log directory if needed
-    $logDir = dirname($logFile);
-    if (!is_dir($logDir)) {
-        mkdir($logDir, 0755, true);
-    }
+    $loop = Loop::get();
 
     $fileFormatter = new LineFormatter(
         "[%datetime%] %channel%.%level_name%: %message% %context% %extra%\n",
@@ -365,9 +361,9 @@ function createLogger(array $config): Logger
         true,
         true
     );
-    $fileHandler = new RotatingFileHandler($logFile, 7, $logLevel);
-    $fileHandler->setFormatter($fileFormatter);
-    $logger->pushHandler($fileHandler);
+    $asyncFileHandler = new AsyncFileHandler($loop, $logFile, 7, $logLevel);
+    $asyncFileHandler->setFormatter($fileFormatter);
+    $logger->pushHandler($asyncFileHandler);
 
     return $logger;
 }

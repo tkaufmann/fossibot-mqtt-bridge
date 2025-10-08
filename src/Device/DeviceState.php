@@ -88,12 +88,17 @@ class DeviceState
         // ONLY update from /client/04 - /client/data has cached/stale values
         if (isset($registers[41]) && $isImmediateResponse) {
             $bitfield = $registers[41];
-            // Use bit-masks from hardware testing (not single bits!)
-            // USB and DC share Bit 7
-            $this->usbOutput = ($bitfield & 640) !== 0;    // 0x280, Bits 7, 9
-            $this->dcOutput = ($bitfield & 1152) !== 0;    // 0x480, Bits 7, 10
-            $this->acOutput = ($bitfield & 2052) !== 0;    // 0x804, Bits 2, 11
-            $this->ledOutput = ($bitfield & 4096) !== 0;   // 0x1000, Bit 12
+            // Hardware-verified bit mapping (Oct 2025):
+            //   USB  = Bit 9  (USB also sets Bit 7)
+            //   DC   = Bit 10 (DC also sets Bit 7)
+            //   AC   = Bits 2, 11
+            //   LED  = Bit 12
+            //
+            // Note: USB and DC share Bit 7, so we check their unique bits (9 and 10)
+            $this->usbOutput = ($bitfield & (1 << 9)) !== 0;   // Bit 9
+            $this->dcOutput = ($bitfield & (1 << 10)) !== 0;   // Bit 10
+            $this->acOutput = ($bitfield & 2052) !== 0;        // 0x804 = Bits 2, 11
+            $this->ledOutput = ($bitfield & 4096) !== 0;       // 0x1000 = Bit 12
             $this->lastOutputUpdate = $now;
         }
 
