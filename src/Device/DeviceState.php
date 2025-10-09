@@ -102,7 +102,9 @@ class DeviceState
             $this->lastOutputUpdate = $now;
         }
 
-        // Settings
+        // Settings (Registers 20, 66, 67)
+        // These come from BOTH /client/04 and /client/data
+        // Accept any value IF the register is present
         if (isset($registers[20])) {
             $this->maxChargingCurrent = $registers[20];
         }
