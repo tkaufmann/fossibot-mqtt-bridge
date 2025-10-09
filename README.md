@@ -201,6 +201,12 @@ Example for topic `fossibot/7C2C67AB5F0E/state`:
   "maxChargingCurrent": 15,
   "dischargeLowerLimit": 10.0,
   "acChargingUpperLimit": 95.0,
+  "acSilentCharging": false,
+  "usbStandbyTime": 0,
+  "acStandbyTime": 0,
+  "dcStandbyTime": 0,
+  "screenRestTime": 0,
+  "sleepTime": 5,
   "timestamp": "2025-10-05T14:23:40+00:00"
 }
 ```
@@ -212,9 +218,15 @@ Messages are published with QoS 1 and the retained flag, so new subscribers imme
 - `inputWatts`: Input power (e.g., solar, AC charging)
 - `outputWatts`: Output power (all outputs combined)
 - `usbOutput`, `acOutput`, `dcOutput`, `ledOutput`: Output status (true/false)
-- `maxChargingCurrent`: Maximum charging current in amperes
-- `dischargeLowerLimit`: Lower discharge limit in percent
-- `acChargingUpperLimit`: Upper charging limit for AC charging in percent
+- `maxChargingCurrent`: Maximum charging current in amperes (1-20A)
+- `dischargeLowerLimit`: Lower discharge limit in percent (0-100%)
+- `acChargingUpperLimit`: Upper charging limit for AC charging in percent (0-100%)
+- `acSilentCharging`: AC silent charging mode enabled (true/false)
+- `usbStandbyTime`: USB auto-off timeout in minutes (0=disabled, 3, 5, 10, 30)
+- `acStandbyTime`: AC auto-off timeout in minutes (0=disabled, 480, 960, 1440)
+- `dcStandbyTime`: DC auto-off timeout in minutes (0=disabled, 480, 960, 1440)
+- `screenRestTime`: Screen timeout in seconds (0=always on, 180, 300, 600, 1800)
+- `sleepTime`: Sleep timeout in minutes (5, 10, 30, 480) - **never 0!**
 
 ### Controlling Devices
 
@@ -253,14 +265,34 @@ mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"led_o
 **Changing settings:**
 ```bash
 # Set maximum charging current (1-20 amperes)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_max_charging_current","value":15}'
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_charging_current","amperes":15}'
 
 # Set lower discharge limit (0-100%)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_discharge_lower_limit","value":10.0}'
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_discharge_limit","percentage":10.0}'
 
-# Set upper charging limit (0-100%)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_upper_limit","value":95.0}'
+# Set upper AC charging limit (0-100%)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_limit","percentage":95.0}'
+
+# Enable/disable AC silent charging
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_silent_charging","enabled":true}'
+
+# Set USB auto-off timeout (0, 3, 5, 10, or 30 minutes)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_usb_standby_time","minutes":10}'
+
+# Set AC auto-off timeout (0, 480, 960, or 1440 minutes)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_standby_time","minutes":480}'
+
+# Set DC auto-off timeout (0, 480, 960, or 1440 minutes)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_dc_standby_time","minutes":480}'
+
+# Set screen timeout (0, 180, 300, 600, or 1800 seconds)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_screen_rest_time","seconds":300}'
+
+# Set sleep timeout (5, 10, 30, or 480 minutes - NEVER 0!)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_sleep_time","minutes":10}'
 ```
+
+**⚠️ Warning**: Never set `sleepTime` to 0 - this will brick your device! The bridge validates this automatically.
 
 ### Bridge Status
 
