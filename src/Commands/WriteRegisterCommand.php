@@ -30,6 +30,14 @@ class WriteRegisterCommand extends Command
         if ($value < 0 || $value > 65535) {
             throw new InvalidArgumentException("Value must be 0-65535, got: {$value}");
         }
+
+        // ⚠️ CRITICAL: Register 68 (Sleep Time) must NEVER be 0 - bricks device!
+        if ($register === 68 && $value === 0) {
+            throw new InvalidArgumentException(
+                "CRITICAL: Register 68 (Sleep Time) cannot be set to 0 - this will brick the device! " .
+                "Valid values: 5, 10, 30, 480 minutes"
+            );
+        }
     }
 
     /**

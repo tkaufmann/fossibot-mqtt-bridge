@@ -15,12 +15,20 @@ use Fossibot\Commands\MaxChargingCurrentCommand;
 use Fossibot\Commands\DischargeLowerLimitCommand;
 use Fossibot\Commands\AcChargingUpperLimitCommand;
 use InvalidArgumentException;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
  * Transforms MQTT payloads between Modbus binary and JSON formats.
  */
 class PayloadTransformer
 {
+    private LoggerInterface $logger;
+
+    public function __construct(?LoggerInterface $logger = null)
+    {
+        $this->logger = $logger ?? new NullLogger();
+    }
     /**
      * Parse Modbus binary payload to register array.
      *
@@ -33,6 +41,16 @@ class PayloadTransformer
      */
     public function parseModbusPayload(string $binaryPayload): array
     {
+        // ==> START: Temporäres Debug-Logging für Register-Offset-Analyse
+        $byteCount = strlen($binaryPayload);
+        $hexDump = bin2hex($binaryPayload);
+        $this->logger->info('--- RAW MODBUS PAYLOAD ---', [
+            'byte_count' => $byteCount,
+            'register_count_expected' => ($byteCount - 5) / 2, // Annahme: 3 Header-Bytes + 2 CRC-Bytes
+            'hex_dump' => $hexDump,
+        ]);
+        // <== END: Temporäres Debug-Logging
+
         $length = strlen($binaryPayload);
 
         if ($length < 8) {
@@ -47,7 +65,6 @@ class PayloadTransformer
 
         if ($thirdByte === 0x00) {
             // Format 2: Full Request/Response with 6-byte header
-            // [SlaveID][FunctionCode][StartRegHigh][StartRegLow][CountHigh][CountLow][Data...][CRC]
             $fullHeader = unpack(
                 'CslaveId/CfunctionCode/nstartRegister/nregisterCount',
                 substr($binaryPayload, 0, 6)
@@ -55,21 +72,28 @@ class PayloadTransformer
 
             $dataStart = 6;
             $dataLength = $length - $dataStart - 2; // Subtract CRC (2 bytes)
-            $data = substr($binaryPayload, $dataStart, $dataLength);
+            $registerCount = $dataLength / 2;
 
-            $registers = [];
-            $registerCount = strlen($data) / 2;
-
-            for ($i = 0; $i < $registerCount; $i++) {
-                $offset = $i * 2;
-                if ($offset + 1 < strlen($data)) {
-                    $high = ord($data[$offset]);
-                    $low = ord($data[$offset + 1]);
-                    $registers[$i] = ($high << 8) | $low;
-                }
+            if ($registerCount <= 0) {
+                return [];
             }
 
-            return $registers;
+            // More efficient & robust: Unpack all registers at once
+            $data = substr($binaryPayload, $dataStart, $dataLength);
+            // 'n*' reads all 2-byte big-endian shorts from the string
+            $unpackedRegisters = unpack("n*", $data);
+
+            if ($unpackedRegisters === false) {
+                return [];
+            }
+
+            // Re-key the array based on the start register from the header.
+            // This correctly handles any start offset.
+            $startRegister = $fullHeader['startRegister'];
+            return array_combine(
+                range($startRegister, $startRegister + count($unpackedRegisters) - 1),
+                array_values($unpackedRegisters)
+            );
         } else {
             // Format 1: Standard Modbus RTU Response
             // [SlaveID][FunctionCode][ByteCount][Data...][CRC]

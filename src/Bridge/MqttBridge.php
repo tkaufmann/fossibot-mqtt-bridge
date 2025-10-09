@@ -83,7 +83,7 @@ class MqttBridge
         // Initialize utilities
         $this->stateManager = new DeviceStateManager();
         $this->topicTranslator = new TopicTranslator();
-        $this->payloadTransformer = new PayloadTransformer();
+        $this->payloadTransformer = new PayloadTransformer($this->logger);
 
         // Initialize caches if configured
         if (isset($this->config['cache'])) {
@@ -682,22 +682,9 @@ class MqttBridge
                 'payload_length' => strlen($modbusPayload)
             ]);
 
-            // Settings commands: Auto-refresh to get new values immediately
-            // Settings are only available in /client/data responses, not /client/04
-            // Output commands (USB/AC/DC) get instant /client/04 response automatically
-            $responseType = $command->getResponseType();
-            $this->logger->info('Command response type', ['type' => $responseType->name]);
-
-            if ($responseType === CommandResponseType::DELAYED) {
-                $this->logger->info('Settings command detected, triggering read_settings refresh');
-
-                // Send read_settings command to get updated values via /client/data
-                $readCommand = \Fossibot\Commands\ReadRegistersCommand::create();
-                $readPayload = $this->payloadTransformer->commandToModbus($readCommand);
-                $client->publish($cloudTopic, $readPayload);
-
-                $this->logger->info('Auto-refresh command sent', ['payload_hex' => bin2hex($readPayload)]);
-            }
+            // Settings commands have DELAYED response (no immediate /client/04)
+            // Settings values appear in next periodic /client/data update (~30 seconds)
+            // Device ignores explicit read commands - only sends periodic updates
         } catch (Exception $e) {
             $this->logger->error('Error handling broker command', [
                 'topic' => $topic,

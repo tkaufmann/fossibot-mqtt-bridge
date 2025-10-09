@@ -60,86 +60,88 @@ class DeviceState
      */
     public function updateFromRegisters(array $registers, ?string $sourceTopic = null, bool $wasCommandTriggered = false): void
     {
-        // Determine if this is an immediate response topic (/client/04)
         $isImmediateResponse = $sourceTopic !== null && str_contains($sourceTopic, '/client/04');
         $isPollingData = $sourceTopic !== null && str_contains($sourceTopic, '/client/data');
         $now = new DateTime();
 
+        // Always update power, battery, and settings from any topic,
+        // as both /client/04 and /client/data contain the full 81 registers.
+        // The assumption that /client/04 has zeroed-out settings was incorrect and caused this bug.
+
         // Battery (Register 56 = SoC)
-        // ONLY update from /client/04 - /client/data has cached/stale values
-        if (isset($registers[56]) && $isImmediateResponse) {
-            $this->soc = round($registers[56] / 1000 * 100, 1); // Convert from thousandths to percentage
+        if (isset($registers[56])) {
+            $this->soc = round($registers[56] / 1000 * 100, 1);
             $this->lastSocUpdate = $now;
-
-            // Track if this was spontaneous or command-triggered
-            $this->lastUpdateWasSpontaneous = !$wasCommandTriggered;
-            $this->lastUpdateSource = $wasCommandTriggered ? 'command' : 'spontaneous';
         }
 
-        // Power values
-        // ONLY update from /client/04 - /client/data has cached/stale values
-        if ($isImmediateResponse) {
-            if (isset($registers[4])) {
-                $this->dcInputWatts = $registers[4]; // DC Input Power
-            }
-            if (isset($registers[6])) {
-                $this->inputWatts = $registers[6]; // Total Input Power
-            }
-            if (isset($registers[39])) {
-                $this->outputWatts = $registers[39]; // Total Output Power
-            }
+        // Power values (Registers 4, 6, 39)
+        if (isset($registers[4])) {
+            $this->dcInputWatts = $registers[4];
         }
-
-        // Output States (Register 41 bitfield)
-        // ONLY update from /client/04 - /client/data has cached/stale values
-        if (isset($registers[41]) && $isImmediateResponse) {
-            $bitfield = $registers[41];
-            // Hardware-verified bit mapping (Oct 2025):
-            //   USB  = Bit 9  (USB also sets Bit 7)
-            //   DC   = Bit 10 (DC also sets Bit 7)
-            //   AC   = Bits 2, 11
-            //   LED  = Bit 12
-            //
-            // Note: USB and DC share Bit 7, so we check their unique bits (9 and 10)
-            $this->usbOutput = ($bitfield & (1 << 9)) !== 0;   // Bit 9
-            $this->dcOutput = ($bitfield & (1 << 10)) !== 0;   // Bit 10
-            $this->acOutput = ($bitfield & 2052) !== 0;        // 0x804 = Bits 2, 11
-            $this->ledOutput = ($bitfield & 4096) !== 0;       // 0x1000 = Bit 12
-            $this->lastOutputUpdate = $now;
+        if (isset($registers[6])) {
+            $this->inputWatts = $registers[6];
+        }
+        if (isset($registers[39])) {
+            $this->outputWatts = $registers[39];
         }
 
         // Settings (Registers 20, 57, 59-62, 66-68)
-        // ONLY update from /client/data - /client/04 has incorrect/default values (always 0)
-        // The official app also reads settings from /client/data, not /client/04
-        if ($isPollingData) {
-            if (isset($registers[20])) {
-                $this->maxChargingCurrent = $registers[20]; // 1-20A
+        if (isset($registers[20])) {
+            $this->maxChargingCurrent = $registers[20];
+        }
+        if (isset($registers[57])) {
+            $this->acSilentCharging = $registers[57] === 1;
+        }
+        if (isset($registers[59])) {
+            $this->usbStandbyTime = $registers[59];
+        }
+        if (isset($registers[60])) {
+            $this->acStandbyTime = $registers[60];
+        }
+        if (isset($registers[61])) {
+            $this->dcStandbyTime = $registers[61];
+        }
+        if (isset($registers[62])) {
+            $this->screenRestTime = $registers[62];
+        }
+        if (isset($registers[66])) {
+            $this->dischargeLowerLimit = $registers[66] / 10.0;
+        }
+        if (isset($registers[67])) {
+            $this->acChargingUpperLimit = $registers[67] / 10.0;
+        }
+        if (isset($registers[68])) {
+            $this->sleepTime = $registers[68];
+        }
+
+        // Output States (Register 41 bitfield) - REQUIRES PRIORITY HANDLING
+        // Per ARCHITECTURE.md, /client/04 is high-priority, /client/data is low-priority
+        // to prevent overwriting fresh command responses with stale polling data.
+        if (isset($registers[41])) {
+            $shouldUpdateOutputs = false;
+            if ($isImmediateResponse) {
+                // /client/04 is high-priority, always update
+                $shouldUpdateOutputs = true;
+                $this->lastOutputUpdate = $now;
+
+                // Track if this was spontaneous or command-triggered
+                $this->lastUpdateWasSpontaneous = !$wasCommandTriggered;
+                $this->lastUpdateSource = $wasCommandTriggered ? 'command' : 'spontaneous';
+            } elseif ($isPollingData) {
+                // /client/data is low-priority, only update if no recent high-priority message
+                $timeSinceLastOutputUpdate = $now->getTimestamp() - $this->lastOutputUpdate->getTimestamp();
+                if ($timeSinceLastOutputUpdate > 35) { // 35s > 30s polling interval
+                    $shouldUpdateOutputs = true;
+                }
             }
-            if (isset($registers[57])) {
-                $this->acSilentCharging = $registers[57] === 1; // Boolean
-            }
-            if (isset($registers[59])) {
-                $this->usbStandbyTime = $registers[59]; // 0,3,5,10,30 minutes
-            }
-            if (isset($registers[60])) {
-                $this->acStandbyTime = $registers[60]; // 0,480,960,1440 minutes
-            }
-            if (isset($registers[61])) {
-                $this->dcStandbyTime = $registers[61]; // 0,480,960,1440 minutes
-            }
-            if (isset($registers[62])) {
-                $this->screenRestTime = $registers[62]; // 0,180,300,600,1800 seconds
-            }
-            if (isset($registers[66])) {
-                $this->dischargeLowerLimit = $registers[66] / 10.0; // Tenths to percentage (0-100%)
-            }
-            if (isset($registers[67])) {
-                $this->acChargingUpperLimit = $registers[67] / 10.0; // Tenths to percentage (0-100%)
-            }
-            if (isset($registers[68])) {
-                // ⚠️ CRITICAL: Register 68 must NEVER be 0 when writing - bricks device!
-                // Safe to read any value, but validate on write
-                $this->sleepTime = $registers[68]; // 5,10,30,480 minutes
+
+            if ($shouldUpdateOutputs) {
+                $bitfield = $registers[41];
+                // Hardware-verified bit mapping (Oct 2025):
+                $this->usbOutput = ($bitfield & (1 << 9)) !== 0;   // Bit 9
+                $this->dcOutput = ($bitfield & (1 << 10)) !== 0;  // Bit 10
+                $this->acOutput = ($bitfield & 2052) !== 0;       // 0x804 = Bits 2, 11
+                $this->ledOutput = ($bitfield & 4096) !== 0;      // 0x1000 = Bit 12
             }
         }
 
