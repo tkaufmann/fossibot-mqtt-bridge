@@ -8,6 +8,8 @@ use Exception;
 use Fossibot\Cache\DeviceCache;
 use Fossibot\Cache\TokenCache;
 use Fossibot\Commands\CommandResponseType;
+use Fossibot\Commands\ReadHoldingRegistersCommand;
+use Fossibot\Commands\RegisterType;
 use Fossibot\Commands\WriteRegisterCommand;
 use Fossibot\Device\DeviceStateManager;
 use Psr\Log\LoggerInterface;
@@ -330,6 +332,9 @@ class MqttBridge
             foreach ($client->getDevices() as $device) {
                 $status = $device->isOnline() ? 'online' : 'offline';
                 $this->publishAvailability($device->getMqttId(), $status);
+
+                // Query initial settings via FC 03 (Holding Registers)
+                $this->queryHoldingRegisters($device->getMqttId(), $client);
             }
         });
 
@@ -442,6 +447,11 @@ class MqttBridge
                     $this->logSpontaneousUpdateStats();
                 });
 
+                // Setup periodic FC 03 query for settings (every 5 minutes = 300s)
+                $this->loop->addPeriodicTimer(300, function () {
+                    $this->pollHoldingRegisters();
+                });
+
                 // Polling disabled - device sends spontaneous updates every ~3 minutes
                 // Test results:
                 //   5s:  Rate-limited (no responses)
@@ -454,6 +464,7 @@ class MqttBridge
                 $this->logger->info('Periodic timers started', [
                     'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
                     'update_stats_interval' => 60,
+                    'holding_registers_interval' => 300,
                     'polling' => 'disabled (spontaneous updates every ~3min)'
                 ]);
             })
@@ -551,6 +562,15 @@ class MqttBridge
                 return;
             }
 
+            // Detect register type from Modbus Function Code
+            $functionCode = strlen($payload) > 1 ? ord($payload[1]) : 0;
+            $registerType = ($functionCode === 3) ? RegisterType::HOLDING : RegisterType::INPUT;
+
+            $this->logger->debug('Register type detected', [
+                'function_code' => $functionCode,
+                'register_type' => $registerType->value
+            ]);
+
             // Optional: Log raw Register 41 and 56 values (configurable via LOG_RAW_REGISTERS)
             if (($this->config['debug']['log_raw_registers'] ?? false) && (isset($registers[41]) || isset($registers[56]))) {
                 $topicType = str_contains($topic, '/client/04') ? 'IMMEDIATE' : 'POLLING';
@@ -578,8 +598,8 @@ class MqttBridge
                 $wasCommandTriggered = $timeSinceCommand < 3.0; // 3 second window
             }
 
-            // Update state (pass topic and command-triggered flag)
-            $this->stateManager->updateDeviceState($mac, $registers, $topic, $wasCommandTriggered);
+            // Update state with register type
+            $this->stateManager->updateDeviceState($mac, $registers, $registerType, $topic, $wasCommandTriggered);
 
             // Get state and convert to JSON
             $state = $this->stateManager->getDeviceState($mac);
@@ -681,6 +701,20 @@ class MqttBridge
                 'payload_hex' => bin2hex($modbusPayload),
                 'payload_length' => strlen($modbusPayload)
             ]);
+
+            // If this is a write command to settings registers, query FC 03 after 2s delay
+            // Settings registers: 20, 57, 59-62, 66-68
+            if ($command instanceof WriteRegisterCommand) {
+                $settingsRegisters = [20, 57, 59, 60, 61, 62, 66, 67, 68];
+                $targetRegister = $command->getTargetRegister();
+
+                if (in_array($targetRegister, $settingsRegisters, true)) {
+                    $this->loop->addTimer(2.0, function () use ($mac, $client) {
+                        $this->queryHoldingRegisters($mac, $client);
+                        $this->logger->debug('Post-write FC 03 query sent', ['mac' => $mac]);
+                    });
+                }
+            }
 
             // Settings commands have DELAYED response (no immediate /client/04)
             // Settings values appear in next periodic /client/data update (~30 seconds)
@@ -888,5 +922,54 @@ class MqttBridge
                 'last_seconds' => $stats['last']
             ]);
         }
+    }
+
+    /**
+     * Query Holding Registers (FC 03) for device settings.
+     * Non-blocking helper to request settings from device.
+     *
+     * @param string $mac Device MAC address
+     * @param AsyncCloudClient $client Cloud client for this device
+     */
+    private function queryHoldingRegisters(string $mac, AsyncCloudClient $client): void
+    {
+        try {
+            $command = ReadHoldingRegistersCommand::create();
+            $modbusPayload = $this->payloadTransformer->commandToModbus($command);
+
+            $cloudTopic = "$mac/client/request/data";
+            $client->publish($cloudTopic, $modbusPayload);
+
+            $this->logger->debug('Holding registers query sent', [
+                'mac' => $mac,
+                'command' => $command->getDescription(),
+                'payload_hex' => bin2hex($modbusPayload)
+            ]);
+        } catch (Exception $e) {
+            $this->logger->error('Failed to query holding registers', [
+                'mac' => $mac,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Periodic poll for Holding Registers (FC 03) across all devices.
+     * Runs every 5 minutes to detect external setting changes.
+     */
+    private function pollHoldingRegisters(): void
+    {
+        foreach ($this->cloudClients as $client) {
+            if (!$client->isConnected()) {
+                continue;
+            }
+
+            foreach ($client->getDevices() as $device) {
+                $mac = $device->getMqttId();
+                $this->queryHoldingRegisters($mac, $client);
+            }
+        }
+
+        $this->logger->debug('Periodic holding registers poll completed');
     }
 }

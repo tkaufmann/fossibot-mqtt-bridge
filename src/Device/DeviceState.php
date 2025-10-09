@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fossibot\Device;
 
 use DateTime;
+use Fossibot\Commands\RegisterType;
 
 /**
  * Represents the current state of a Fossibot device.
@@ -54,70 +55,80 @@ class DeviceState
     /**
      * Update state from F2400 register array.
      *
+     * Hybrid strategy: INPUT registers contain realtime data (power, SOC),
+     * HOLDING registers contain settings (limits, timeouts).
+     *
      * @param array $registers Modbus registers (index => value)
+     * @param RegisterType $registerType Type of registers (INPUT or HOLDING)
      * @param string|null $sourceTopic MQTT topic that triggered this update
      * @param bool $wasCommandTriggered Was this update triggered by a command we sent?
      */
-    public function updateFromRegisters(array $registers, ?string $sourceTopic = null, bool $wasCommandTriggered = false): void
-    {
+    public function updateFromRegisters(
+        array $registers,
+        RegisterType $registerType,
+        ?string $sourceTopic = null,
+        bool $wasCommandTriggered = false
+    ): void {
         $isImmediateResponse = $sourceTopic !== null && str_contains($sourceTopic, '/client/04');
         $isPollingData = $sourceTopic !== null && str_contains($sourceTopic, '/client/data');
         $now = new DateTime();
 
-        // Always update power, battery, and settings from any topic,
-        // as both /client/04 and /client/data contain the full 81 registers.
-        // The assumption that /client/04 has zeroed-out settings was incorrect and caused this bug.
+        // INPUT registers (FC 04): Realtime sensor data
+        if ($registerType === RegisterType::INPUT) {
+            // Battery (Register 56 = SoC)
+            if (isset($registers[56])) {
+                $this->soc = round($registers[56] / 1000 * 100, 1);
+                $this->lastSocUpdate = $now;
+            }
 
-        // Battery (Register 56 = SoC)
-        if (isset($registers[56])) {
-            $this->soc = round($registers[56] / 1000 * 100, 1);
-            $this->lastSocUpdate = $now;
+            // Power values (Registers 4, 6, 39)
+            if (isset($registers[4])) {
+                $this->dcInputWatts = $registers[4];
+            }
+            if (isset($registers[6])) {
+                $this->inputWatts = $registers[6];
+            }
+            if (isset($registers[39])) {
+                $this->outputWatts = $registers[39];
+            }
         }
 
-        // Power values (Registers 4, 6, 39)
-        if (isset($registers[4])) {
-            $this->dcInputWatts = $registers[4];
-        }
-        if (isset($registers[6])) {
-            $this->inputWatts = $registers[6];
-        }
-        if (isset($registers[39])) {
-            $this->outputWatts = $registers[39];
-        }
-
-        // Settings (Registers 20, 57, 59-62, 66-68)
-        if (isset($registers[20])) {
-            $this->maxChargingCurrent = $registers[20];
-        }
-        if (isset($registers[57])) {
-            $this->acSilentCharging = $registers[57] === 1;
-        }
-        if (isset($registers[59])) {
-            $this->usbStandbyTime = $registers[59];
-        }
-        if (isset($registers[60])) {
-            $this->acStandbyTime = $registers[60];
-        }
-        if (isset($registers[61])) {
-            $this->dcStandbyTime = $registers[61];
-        }
-        if (isset($registers[62])) {
-            $this->screenRestTime = $registers[62];
-        }
-        if (isset($registers[66])) {
-            $this->dischargeLowerLimit = $registers[66] / 10.0;
-        }
-        if (isset($registers[67])) {
-            $this->acChargingUpperLimit = $registers[67] / 10.0;
-        }
-        if (isset($registers[68])) {
-            $this->sleepTime = $registers[68];
+        // HOLDING registers (FC 03): Settings/Configuration
+        if ($registerType === RegisterType::HOLDING) {
+            if (isset($registers[20])) {
+                $this->maxChargingCurrent = $registers[20];
+            }
+            if (isset($registers[57])) {
+                $this->acSilentCharging = $registers[57] === 1;
+            }
+            if (isset($registers[59])) {
+                $this->usbStandbyTime = $registers[59];
+            }
+            if (isset($registers[60])) {
+                $this->acStandbyTime = $registers[60];
+            }
+            if (isset($registers[61])) {
+                $this->dcStandbyTime = $registers[61];
+            }
+            if (isset($registers[62])) {
+                $this->screenRestTime = $registers[62];
+            }
+            if (isset($registers[66])) {
+                $this->dischargeLowerLimit = $registers[66] / 10.0;
+            }
+            if (isset($registers[67])) {
+                $this->acChargingUpperLimit = $registers[67] / 10.0;
+            }
+            if (isset($registers[68])) {
+                $this->sleepTime = $registers[68];
+            }
         }
 
         // Output States (Register 41 bitfield) - REQUIRES PRIORITY HANDLING
+        // Only available in INPUT registers
         // Per ARCHITECTURE.md, /client/04 is high-priority, /client/data is low-priority
         // to prevent overwriting fresh command responses with stale polling data.
-        if (isset($registers[41])) {
+        if ($registerType === RegisterType::INPUT && isset($registers[41])) {
             $shouldUpdateOutputs = false;
             if ($isImmediateResponse) {
                 // /client/04 is high-priority, always update

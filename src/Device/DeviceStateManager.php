@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Fossibot\Device;
 
 use Fossibot\Bridge\BridgeMetrics;
+use Fossibot\Commands\RegisterType;
 
 /**
  * Manages DeviceState instances for multiple devices.
@@ -42,13 +43,19 @@ class DeviceStateManager
      *
      * @param string $macAddress Device MAC address
      * @param array $registers Modbus register array
+     * @param RegisterType $registerType Type of registers (INPUT or HOLDING)
      * @param string|null $sourceTopic MQTT topic that triggered this update
      * @param bool $wasCommandTriggered Was this update triggered by a command we sent?
      */
-    public function updateDeviceState(string $macAddress, array $registers, ?string $sourceTopic = null, bool $wasCommandTriggered = false): void
-    {
+    public function updateDeviceState(
+        string $macAddress,
+        array $registers,
+        RegisterType $registerType,
+        ?string $sourceTopic = null,
+        bool $wasCommandTriggered = false
+    ): void {
         $state = $this->getDeviceState($macAddress);
-        $state->updateFromRegisters($registers, $sourceTopic, $wasCommandTriggered);
+        $state->updateFromRegisters($registers, $registerType, $sourceTopic, $wasCommandTriggered);
 
         // Track spontaneous updates in metrics (only for /client/04 responses not triggered by commands)
         $isImmediateResponse = $sourceTopic !== null && str_contains($sourceTopic, '/client/04');
