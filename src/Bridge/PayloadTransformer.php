@@ -11,6 +11,7 @@ use Fossibot\Commands\AcOutputCommand;
 use Fossibot\Commands\DcOutputCommand;
 use Fossibot\Commands\LedOutputCommand;
 use Fossibot\Commands\ReadRegistersCommand;
+use Fossibot\Commands\ReadHoldingRegistersCommand;
 use Fossibot\Commands\MaxChargingCurrentCommand;
 use Fossibot\Commands\DischargeLowerLimitCommand;
 use Fossibot\Commands\AcChargingUpperLimitCommand;
@@ -193,6 +194,7 @@ class PayloadTransformer
             'led_on' => LedOutputCommand::enable(),
             'led_off' => LedOutputCommand::disable(),
             'read_settings' => ReadRegistersCommand::create(),
+            'read_holding_registers' => ReadHoldingRegistersCommand::create(),
             'set_charging_current' => new MaxChargingCurrentCommand(
                 (int)($data['amperes'] ?? throw new InvalidArgumentException('Missing amperes parameter'))
             ),

@@ -28,6 +28,13 @@ abstract class Command
     abstract public function getResponseType(): CommandResponseType;
 
     /**
+     * Get the register type that this command's response will contain.
+     *
+     * @return RegisterType Type of registers in response (INPUT or HOLDING)
+     */
+    abstract public function getRegisterType(): RegisterType;
+
+    /**
      * Get the primary register this command targets.
      *
      * @return int Register address (0-65535)

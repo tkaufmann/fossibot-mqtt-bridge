@@ -53,6 +53,11 @@ class ReadRegistersCommand extends Command
         return CommandResponseType::READ_RESPONSE;
     }
 
+    public function getRegisterType(): RegisterType
+    {
+        return RegisterType::INPUT; // FC 04 reads Input Registers
+    }
+
     public function getTargetRegister(): int
     {
         return $this->startRegister;
@@ -64,10 +69,16 @@ class ReadRegistersCommand extends Command
     }
 
     /**
-     * Create a ReadRegistersCommand with default F2400 parameters (80 registers from 0).
+     * Create a ReadRegistersCommand with default F2400 parameters (81 registers from 0).
+     *
+     * The F2400 returns 81 registers (0-80), containing:
+     * - Power values (registers 4, 6, 39)
+     * - Output states (register 41 bitfield)
+     * - Battery SoC (register 56)
+     * - Settings (registers 20, 57, 59-62, 66-68)
      */
     public static function create(): self
     {
-        return new self(startRegister: 0, count: 80);
+        return new self(startRegister: 0, count: 81);
     }
 }

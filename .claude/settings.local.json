@@ -20,7 +20,8 @@
       "Bash(docker push:*)",
       "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=50 fossibot-bridge 2>&1\")",
       "Bash(mosquitto_pub:*)",
-      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=20 fossibot-bridge 2>&1\")"
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=20 fossibot-bridge 2>&1\")",
+      "Bash(ssh:*)"
     ],
     "deny": [],
     "ask": []

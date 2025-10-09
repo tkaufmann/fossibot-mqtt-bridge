@@ -64,6 +64,12 @@ class WriteRegisterCommand extends Command
         return $this->responseType;
     }
 
+    public function getRegisterType(): RegisterType
+    {
+        // Write commands trigger /client/04 responses with INPUT registers
+        return RegisterType::INPUT;
+    }
+
     public function getTargetRegister(): int
     {
         return $this->register;
