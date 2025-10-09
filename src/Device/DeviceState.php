@@ -24,10 +24,16 @@ class DeviceState
     public bool $dcOutput = false;              // DC ports on/off
     public bool $ledOutput = false;             // LED lights on/off
 
-    // Settings (from Registers 20, 66, 67)
-    public int $maxChargingCurrent = 0;         // 1-20 Amperes
-    public float $dischargeLowerLimit = 0.0;    // 0-100%
-    public float $acChargingUpperLimit = 100.0; // 0-100%
+    // Settings (from Registers 20, 57, 59-62, 66-68)
+    public int $maxChargingCurrent = 0;         // Register 20: 1-20 Amperes
+    public float $dischargeLowerLimit = 0.0;    // Register 66: 0-100%
+    public float $acChargingUpperLimit = 100.0; // Register 67: 0-100%
+    public bool $acSilentCharging = false;      // Register 57: AC Silent Charging enabled/disabled
+    public int $usbStandbyTime = 0;             // Register 59: 0,3,5,10,30 minutes
+    public int $acStandbyTime = 0;              // Register 60: 0,480,960,1440 minutes
+    public int $dcStandbyTime = 0;              // Register 61: 0,480,960,1440 minutes
+    public int $screenRestTime = 0;             // Register 62: 0,180,300,600,1800 seconds
+    public int $sleepTime = 5;                  // Register 68: 5,10,30,480 minutes (NEVER 0!)
 
     // Metadata
     public DateTime $lastFullUpdate;
@@ -102,17 +108,39 @@ class DeviceState
             $this->lastOutputUpdate = $now;
         }
 
-        // Settings (Registers 20, 66, 67)
-        // These come from BOTH /client/04 and /client/data
-        // Accept any value IF the register is present
-        if (isset($registers[20])) {
-            $this->maxChargingCurrent = $registers[20];
-        }
-        if (isset($registers[66])) {
-            $this->dischargeLowerLimit = $registers[66] / 10.0; // Tenths to percentage
-        }
-        if (isset($registers[67])) {
-            $this->acChargingUpperLimit = $registers[67] / 10.0; // Tenths to percentage
+        // Settings (Registers 20, 57, 59-62, 66-68)
+        // ONLY update from /client/data - /client/04 has incorrect/default values (always 0)
+        // The official app also reads settings from /client/data, not /client/04
+        if ($isPollingData) {
+            if (isset($registers[20])) {
+                $this->maxChargingCurrent = $registers[20]; // 1-20A
+            }
+            if (isset($registers[57])) {
+                $this->acSilentCharging = $registers[57] === 1; // Boolean
+            }
+            if (isset($registers[59])) {
+                $this->usbStandbyTime = $registers[59]; // 0,3,5,10,30 minutes
+            }
+            if (isset($registers[60])) {
+                $this->acStandbyTime = $registers[60]; // 0,480,960,1440 minutes
+            }
+            if (isset($registers[61])) {
+                $this->dcStandbyTime = $registers[61]; // 0,480,960,1440 minutes
+            }
+            if (isset($registers[62])) {
+                $this->screenRestTime = $registers[62]; // 0,180,300,600,1800 seconds
+            }
+            if (isset($registers[66])) {
+                $this->dischargeLowerLimit = $registers[66] / 10.0; // Tenths to percentage (0-100%)
+            }
+            if (isset($registers[67])) {
+                $this->acChargingUpperLimit = $registers[67] / 10.0; // Tenths to percentage (0-100%)
+            }
+            if (isset($registers[68])) {
+                // ⚠️ CRITICAL: Register 68 must NEVER be 0 when writing - bricks device!
+                // Safe to read any value, but validate on write
+                $this->sleepTime = $registers[68]; // 5,10,30,480 minutes
+            }
         }
 
         $this->lastFullUpdate = new DateTime();

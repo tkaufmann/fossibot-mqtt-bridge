@@ -115,17 +115,29 @@ class PayloadTransformer
     public function stateToJson(DeviceState $state): string
     {
         return json_encode([
+            // Battery & Power
             'soc' => $state->soc,
             'inputWatts' => $state->inputWatts,
             'outputWatts' => $state->outputWatts,
             'dcInputWatts' => $state->dcInputWatts,
+
+            // Output States
             'usbOutput' => $state->usbOutput,
             'acOutput' => $state->acOutput,
             'dcOutput' => $state->dcOutput,
             'ledOutput' => $state->ledOutput,
+
+            // Settings
             'maxChargingCurrent' => $state->maxChargingCurrent,
             'dischargeLowerLimit' => $state->dischargeLowerLimit,
             'acChargingUpperLimit' => $state->acChargingUpperLimit,
+            'acSilentCharging' => $state->acSilentCharging,
+            'usbStandbyTime' => $state->usbStandbyTime,
+            'acStandbyTime' => $state->acStandbyTime,
+            'dcStandbyTime' => $state->dcStandbyTime,
+            'screenRestTime' => $state->screenRestTime,
+            'sleepTime' => $state->sleepTime,
+
             'timestamp' => $state->lastFullUpdate->format('c')
         ], JSON_THROW_ON_ERROR);
     }

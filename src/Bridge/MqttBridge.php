@@ -682,10 +682,21 @@ class MqttBridge
                 'payload_length' => strlen($modbusPayload)
             ]);
 
-            // Trigger immediate poll for settings commands (delayed response)
-            // Output commands (USB/AC/DC) get instant response, no need to poll
-            if ($command->getResponseType() === CommandResponseType::DELAYED) {
-                $this->triggerImmediatePoll();
+            // Settings commands: Auto-refresh to get new values immediately
+            // Settings are only available in /client/data responses, not /client/04
+            // Output commands (USB/AC/DC) get instant /client/04 response automatically
+            $responseType = $command->getResponseType();
+            $this->logger->info('Command response type', ['type' => $responseType->name]);
+
+            if ($responseType === CommandResponseType::DELAYED) {
+                $this->logger->info('Settings command detected, triggering read_settings refresh');
+
+                // Send read_settings command to get updated values via /client/data
+                $readCommand = \Fossibot\Commands\ReadRegistersCommand::create();
+                $readPayload = $this->payloadTransformer->commandToModbus($readCommand);
+                $client->publish($cloudTopic, $readPayload);
+
+                $this->logger->info('Auto-refresh command sent', ['payload_hex' => bin2hex($readPayload)]);
             }
         } catch (Exception $e) {
             $this->logger->error('Error handling broker command', [

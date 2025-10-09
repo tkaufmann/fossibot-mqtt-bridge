@@ -11,7 +11,16 @@
       "Bash(mv:*)",
       "Bash(git push:*)",
       "Bash(./vendor/bin/phpcbf:*)",
-      "Bash(./vendor/bin/phpcs:*)"
+      "Bash(./vendor/bin/phpcs:*)",
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=80 fossibot-bridge 2>&1\")",
+      "Bash(docker buildx build:*)",
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=40 fossibot-bridge 2>&1\")",
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=100 fossibot-bridge 2>&1\")",
+      "Bash(docker tag:*)",
+      "Bash(docker push:*)",
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=50 fossibot-bridge 2>&1\")",
+      "Bash(mosquitto_pub:*)",
+      "Bash(ssh frasier \"docker compose -f /srv/docker/fossibot/docker-compose.yaml logs --tail=20 fossibot-bridge 2>&1\")"
     ],
     "deny": [],
     "ask": []
