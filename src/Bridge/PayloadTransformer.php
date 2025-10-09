@@ -15,6 +15,12 @@ use Fossibot\Commands\ReadHoldingRegistersCommand;
 use Fossibot\Commands\MaxChargingCurrentCommand;
 use Fossibot\Commands\DischargeLowerLimitCommand;
 use Fossibot\Commands\AcChargingUpperLimitCommand;
+use Fossibot\Commands\AcSilentChargingCommand;
+use Fossibot\Commands\UsbStandbyTimeCommand;
+use Fossibot\Commands\AcStandbyTimeCommand;
+use Fossibot\Commands\DcStandbyTimeCommand;
+use Fossibot\Commands\ScreenRestTimeCommand;
+use Fossibot\Commands\SleepTimeCommand;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -203,6 +209,24 @@ class PayloadTransformer
             ),
             'set_ac_charging_limit' => new AcChargingUpperLimitCommand(
                 (int)round(($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10)
+            ),
+            'set_ac_silent_charging' => new AcSilentChargingCommand(
+                (bool)($data['enabled'] ?? throw new InvalidArgumentException('Missing enabled parameter'))
+            ),
+            'set_usb_standby_time' => new UsbStandbyTimeCommand(
+                (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))
+            ),
+            'set_ac_standby_time' => new AcStandbyTimeCommand(
+                (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))
+            ),
+            'set_dc_standby_time' => new DcStandbyTimeCommand(
+                (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))
+            ),
+            'set_screen_rest_time' => new ScreenRestTimeCommand(
+                (int)($data['seconds'] ?? throw new InvalidArgumentException('Missing seconds parameter'))
+            ),
+            'set_sleep_time' => new SleepTimeCommand(
+                (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))
             ),
             default => throw new InvalidArgumentException("Unknown action: $action")
         };
