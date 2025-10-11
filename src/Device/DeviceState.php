@@ -25,7 +25,7 @@ class DeviceState
     public bool $dcOutput = false;              // DC ports on/off
     public bool $ledOutput = false;             // LED lights on/off
 
-    // Settings (from Registers 20, 57, 59-62, 66-68)
+    // Settings (from Registers 20, 57, 59-63, 66-68)
     public int $maxChargingCurrent = 0;         // Register 20: 1-20 Amperes
     public float $dischargeLowerLimit = 0.0;    // Register 66: 0-100%
     public float $acChargingUpperLimit = 100.0; // Register 67: 0-100%
@@ -34,6 +34,7 @@ class DeviceState
     public int $acStandbyTime = 0;              // Register 60: 0,480,960,1440 minutes
     public int $dcStandbyTime = 0;              // Register 61: 0,480,960,1440 minutes
     public int $screenRestTime = 0;             // Register 62: 0,180,300,600,1800 seconds
+    public int $acChargingTimer = 0;            // Register 63: 0-1439 minutes (countdown timer)
     public int $sleepTime = 5;                  // Register 68: 5,10,30,480 minutes (NEVER 0!)
 
     // Metadata
@@ -112,6 +113,9 @@ class DeviceState
             }
             if (isset($registers[62])) {
                 $this->screenRestTime = $registers[62];
+            }
+            if (isset($registers[63])) {
+                $this->acChargingTimer = $registers[63];
             }
             if (isset($registers[66])) {
                 $this->dischargeLowerLimit = $registers[66] / 10.0;

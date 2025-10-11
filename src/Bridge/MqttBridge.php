@@ -703,9 +703,9 @@ class MqttBridge
             ]);
 
             // If this is a write command to settings registers, query FC 03 after 2s delay
-            // Settings registers: 20, 57, 59-62, 66-68
+            // Settings registers: 20, 57, 59-63, 66-68
             if ($command instanceof WriteRegisterCommand) {
-                $settingsRegisters = [20, 57, 59, 60, 61, 62, 66, 67, 68];
+                $settingsRegisters = [20, 57, 59, 60, 61, 62, 63, 66, 67, 68];
                 $targetRegister = $command->getTargetRegister();
 
                 if (in_array($targetRegister, $settingsRegisters, true)) {

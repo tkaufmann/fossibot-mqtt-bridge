@@ -20,6 +20,7 @@ use Fossibot\Commands\UsbStandbyTimeCommand;
 use Fossibot\Commands\AcStandbyTimeCommand;
 use Fossibot\Commands\DcStandbyTimeCommand;
 use Fossibot\Commands\ScreenRestTimeCommand;
+use Fossibot\Commands\AcChargingTimerCommand;
 use Fossibot\Commands\SleepTimeCommand;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
@@ -167,6 +168,7 @@ class PayloadTransformer
             'acStandbyTime' => $state->acStandbyTime,
             'dcStandbyTime' => $state->dcStandbyTime,
             'screenRestTime' => $state->screenRestTime,
+            'acChargingTimer' => $state->acChargingTimer,
             'sleepTime' => $state->sleepTime,
 
             'timestamp' => $state->lastFullUpdate->format('c')
@@ -224,6 +226,9 @@ class PayloadTransformer
             ),
             'set_screen_rest_time' => new ScreenRestTimeCommand(
                 (int)($data['seconds'] ?? throw new InvalidArgumentException('Missing seconds parameter'))
+            ),
+            'set_ac_charging_timer' => new AcChargingTimerCommand(
+                (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))
             ),
             'set_sleep_time' => new SleepTimeCommand(
                 (int)($data['minutes'] ?? throw new InvalidArgumentException('Missing minutes parameter'))

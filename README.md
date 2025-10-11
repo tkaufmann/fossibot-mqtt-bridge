@@ -206,6 +206,7 @@ Example for topic `fossibot/7C2C67AB5F0E/state`:
   "acStandbyTime": 0,
   "dcStandbyTime": 0,
   "screenRestTime": 0,
+  "acChargingTimer": 0,
   "sleepTime": 5,
   "timestamp": "2025-10-05T14:23:40+00:00"
 }
@@ -226,6 +227,7 @@ Messages are published with QoS 1 and the retained flag, so new subscribers imme
 - `acStandbyTime`: AC auto-off timeout in minutes (0=disabled, 480, 960, 1440)
 - `dcStandbyTime`: DC auto-off timeout in minutes (0=disabled, 480, 960, 1440)
 - `screenRestTime`: Screen timeout in seconds (0=always on, 180, 300, 600, 1800)
+- `acChargingTimer`: AC charging countdown timer in minutes (0=disabled, 1-1439)
 - `sleepTime`: Sleep timeout in minutes (5, 10, 30, 480) - **never 0!**
 
 ### Controlling Devices
@@ -287,6 +289,10 @@ mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_d
 
 # Set screen timeout (0, 180, 300, 600, or 1800 seconds)
 mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_screen_rest_time","seconds":300}'
+
+# Set AC charging timer (0-1439 minutes, 0=disabled)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_timer","minutes":244}'  # 4h 4min
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_timer","minutes":0}'    # Disable timer
 
 # Set sleep timeout (5, 10, 30, or 480 minutes - NEVER 0!)
 mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_sleep_time","minutes":10}'
