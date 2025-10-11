@@ -5,18 +5,17 @@ declare(strict_types=1);
 namespace Fossibot\Bridge;
 
 use Evenement\EventEmitter;
+use Exception;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
+use React\EventLoop\TimerInterface;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
 use React\Socket\ConnectionInterface;
-use React\EventLoop\TimerInterface;
-
-use function React\Promise\resolve;
-use function React\Promise\reject;
-
 use RuntimeException;
-use Exception;
+
+use function React\Promise\reject;
+use function React\Promise\resolve;
 
 /**
  * Generic async MQTT client using ReactPHP.
@@ -148,7 +147,8 @@ class AsyncMqttClient extends EventEmitter
             $variableHeader .= pack('n', $packetId);
         }
 
-        $packet = chr($flags) . $this->encodeLength(strlen($variableHeader) + strlen($payload)) . $variableHeader . $payload;
+        $length = strlen($variableHeader) + strlen($payload);
+        $packet = chr($flags) . $this->encodeLength($length) . $variableHeader . $payload;
 
         $this->connection->write($packet);
 

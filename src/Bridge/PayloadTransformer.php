@@ -207,10 +207,14 @@ class PayloadTransformer
                 (int)($data['amperes'] ?? throw new InvalidArgumentException('Missing amperes parameter'))
             ),
             'set_discharge_limit' => new DischargeLowerLimitCommand(
-                (int)round(($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10)
+                (int)round(
+                    ($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10
+                )
             ),
             'set_ac_charging_limit' => new AcChargingUpperLimitCommand(
-                (int)round(($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10)
+                (int)round(
+                    ($data['percentage'] ?? throw new InvalidArgumentException('Missing percentage parameter')) * 10
+                )
             ),
             'set_ac_silent_charging' => new AcSilentChargingCommand(
                 (bool)($data['enabled'] ?? throw new InvalidArgumentException('Missing enabled parameter'))
