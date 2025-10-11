@@ -1,10 +1,10 @@
 <?php
 
-declare(strict_types=1);
-
 /**
  * ABOUTME: Value object representing a Stage 1 anonymous authorization request.
  */
+
+declare(strict_types=1);
 
 namespace Fossibot\ValueObjects;
 

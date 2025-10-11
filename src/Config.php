@@ -1,11 +1,11 @@
 <?php
 
-declare(strict_types=1);
-
 /**
  * ABOUTME: Provides configuration values for Fossibot API integration.
  * Loads environment variables from .env file using vlucas/phpdotenv.
  */
+
+declare(strict_types=1);
 
 namespace Fossibot;
 

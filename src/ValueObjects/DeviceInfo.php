@@ -1,10 +1,10 @@
 <?php
 
-declare(strict_types=1);
-
 /**
  * ABOUTME: Value object representing Android device information for API requests.
  */
+
+declare(strict_types=1);
 
 namespace Fossibot\ValueObjects;
 
