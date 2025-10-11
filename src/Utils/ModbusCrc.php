@@ -30,7 +30,8 @@ class ModbusCrc
 
         foreach ($data as $index => $byte) {
             if (!is_int($byte) || $byte < 0 || $byte > 255) {
-                throw new InvalidArgumentException("Invalid byte value at index {$index}: {$byte}. Must be integer 0-255");
+                $message = "Invalid byte value at index {$index}: {$byte}. Must be integer 0-255";
+                throw new InvalidArgumentException($message);
             }
         }
 

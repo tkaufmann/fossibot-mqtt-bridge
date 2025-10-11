@@ -572,7 +572,9 @@ class MqttBridge
             ]);
 
             // Optional: Log raw Register 41 and 56 values (configurable via LOG_RAW_REGISTERS)
-            if (($this->config['debug']['log_raw_registers'] ?? false) && (isset($registers[41]) || isset($registers[56]))) {
+            $shouldLogRaw = ($this->config['debug']['log_raw_registers'] ?? false) &&
+                (isset($registers[41]) || isset($registers[56]));
+            if ($shouldLogRaw) {
                 $topicType = str_contains($topic, '/client/04') ? 'IMMEDIATE' : 'POLLING';
                 $logData = ['topic' => $topic];
 

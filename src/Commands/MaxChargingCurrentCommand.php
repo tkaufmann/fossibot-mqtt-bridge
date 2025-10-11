@@ -28,9 +28,9 @@ class MaxChargingCurrentCommand extends WriteRegisterCommand
     public function __construct(private readonly int $currentAmperes)
     {
         if ($currentAmperes < self::MIN_CURRENT || $currentAmperes > self::MAX_CURRENT) {
-            throw new InvalidArgumentException(
-                "Charging current must be between " . self::MIN_CURRENT . " and " . self::MAX_CURRENT . " Amperes. Got: {$currentAmperes}"
-            );
+            $message = "Charging current must be between " . self::MIN_CURRENT .
+                " and " . self::MAX_CURRENT . " Amperes. Got: {$currentAmperes}";
+            throw new InvalidArgumentException($message);
         }
 
         parent::__construct(self::TARGET_REGISTER, $currentAmperes, CommandResponseType::DELAYED);

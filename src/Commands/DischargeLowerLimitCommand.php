@@ -28,9 +28,9 @@ class DischargeLowerLimitCommand extends WriteRegisterCommand
     public function __construct(private readonly int $limitTenths)
     {
         if ($limitTenths < self::MIN_VALUE || $limitTenths > self::MAX_VALUE) {
-            throw new InvalidArgumentException(
-                "Discharge limit must be " . self::MIN_VALUE . "-" . self::MAX_VALUE . " tenths (0.0%-100.0%). Got: {$limitTenths}"
-            );
+            $message = "Discharge limit must be " . self::MIN_VALUE . "-" . self::MAX_VALUE .
+                " tenths (0.0%-100.0%). Got: {$limitTenths}";
+            throw new InvalidArgumentException($message);
         }
 
         parent::__construct(self::TARGET_REGISTER, $limitTenths, CommandResponseType::DELAYED);

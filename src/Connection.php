@@ -27,7 +27,8 @@ use InvalidArgumentException;
  * Manages Fossibot API authentication through 4 stages.
  *
  * Stage 1 (s1): Anonymous Authorization
- * - ✅ IMPLEMENTED: s1_performAnonymousAuth(), s1_generateRequest(), s1_generateSignature(), s1_sendRequest(), s1_parseResponse(), s1_handleError()
+ * - ✅ IMPLEMENTED: s1_performAnonymousAuth(), s1_generateRequest(), s1_generateSignature(),
+ *   s1_sendRequest(), s1_parseResponse(), s1_handleError()
  * - Generates anonymous token valid for 10 minutes (600 seconds)
  * - Required for all subsequent API calls
  *
@@ -1141,8 +1142,12 @@ final class Connection
     public function getDevices(): array
     {
         // Requires at least Stage 3 (MQTT token) for API authentication
-        if ($this->authState !== AuthState::STAGE3_COMPLETED && $this->authState !== AuthState::FULLY_CONNECTED) {
-            throw new RuntimeException('Cannot get devices: Authentication incomplete. Call authenticateOnly() or connect() first.');
+        $isAuthenticationComplete = $this->authState === AuthState::STAGE3_COMPLETED ||
+            $this->authState === AuthState::FULLY_CONNECTED;
+        if (!$isAuthenticationComplete) {
+            $message = 'Cannot get devices: Authentication incomplete. ' .
+                'Call authenticateOnly() or connect() first.';
+            throw new RuntimeException($message);
         }
 
         try {

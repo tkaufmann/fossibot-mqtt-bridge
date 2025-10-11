@@ -163,7 +163,9 @@ function validateConfig(array $config): array
     if (!isset($config['bridge']) || !is_array($config['bridge'])) {
         $errors[] = "Missing or invalid 'bridge' configuration";
     } else {
-        if (!isset($config['bridge']['status_publish_interval']) || !is_int($config['bridge']['status_publish_interval'])) {
+        $hasValidInterval = isset($config['bridge']['status_publish_interval']) &&
+            is_int($config['bridge']['status_publish_interval']);
+        if (!$hasValidInterval) {
             $errors[] = "Missing or invalid bridge.status_publish_interval (must be integer)";
         }
         if (!isset($config['bridge']['reconnect_delay_min']) || !is_int($config['bridge']['reconnect_delay_min'])) {
