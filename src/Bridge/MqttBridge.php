@@ -249,7 +249,9 @@ class MqttBridge
         $this->logger->info('MqttBridge stopped');
     }
 
-    // --- Private Methods ---
+    // =========================================================================
+    // LIFECYCLE MANAGEMENT
+    // =========================================================================
 
     private function setupSignalHandlers(): void
     {
@@ -265,6 +267,10 @@ class MqttBridge
             $this->shutdown();
         });
     }
+
+    // =========================================================================
+    // CLOUD ACCOUNT MANAGEMENT
+    // =========================================================================
 
     private function initializeAccounts(): void
     {
@@ -353,6 +359,10 @@ class MqttBridge
             ]);
         });
     }
+
+    // =========================================================================
+    // LOCAL BROKER CONNECTION & RECONNECTION
+    // =========================================================================
 
     private function connectBroker(): void
     {
@@ -535,6 +545,10 @@ class MqttBridge
             $this->connectBroker();
         });
     }
+
+    // =========================================================================
+    // MESSAGE ROUTING (Cloud ↔ Broker)
+    // =========================================================================
 
     private function handleCloudMessage(string $accountEmail, string $topic, string $payload): void
     {
@@ -742,6 +756,10 @@ class MqttBridge
         return null;
     }
 
+    // =========================================================================
+    // MQTT PUBLISHING
+    // =========================================================================
+
     private function publishAvailability(string $mac, string $status): void
     {
         // Only publish if broker is connected
@@ -812,6 +830,10 @@ class MqttBridge
         $masked = $local[0] . '***' . $local[strlen($local) - 1];
         return "$masked@$domain";
     }
+
+    // =========================================================================
+    // DEVICE POLLING & STATISTICS
+    // =========================================================================
 
     /**
      * Poll all devices for their current state.

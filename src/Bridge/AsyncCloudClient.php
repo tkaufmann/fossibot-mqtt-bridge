@@ -272,7 +272,9 @@ class AsyncCloudClient extends EventEmitter
         return $this->mqttClient->publish($topic, $payload, $qos);
     }
 
-    // --- Private Methods ---
+    // =========================================================================
+    // RECONNECTION LOGIC (3-Tier Strategy)
+    // =========================================================================
 
     /**
      * Tier 1: Simple reconnect using existing authentication tokens.
@@ -458,6 +460,10 @@ class AsyncCloudClient extends EventEmitter
         return resolve(null);
     }
 
+    // =========================================================================
+    // CONNECTION MANAGEMENT
+    // =========================================================================
+
     /**
      * Connect MQTT client using AsyncMqttClient with WebSocket transport.
      */
@@ -522,6 +528,10 @@ class AsyncCloudClient extends EventEmitter
         // Connect MQTT client
         return $this->mqttClient->connect();
     }
+
+    // =========================================================================
+    // AUTHENTICATION & DEVICE DISCOVERY
+    // =========================================================================
 
     /**
      * Performs 3-stage authentication (async).
@@ -778,9 +788,9 @@ class AsyncCloudClient extends EventEmitter
         return $payload['exp'] ?? null;
     }
 
-    // ========================================================================
-    // Async Authentication Implementation (Stages 1-3)
-    // ========================================================================
+    // =========================================================================
+    // FOSSIBOT API METHODS (4-Stage Authentication + Device Fetch)
+    // =========================================================================
 
     /**
      * Stage 1: Acquire anonymous token (async).
@@ -1127,9 +1137,9 @@ class AsyncCloudClient extends EventEmitter
         );
     }
 
-    // ========================================================================
-    // Helper Methods
-    // ========================================================================
+    // =========================================================================
+    // UTILITY METHODS
+    // =========================================================================
 
     /**
      * Creates configured HTTP Browser for async API calls.
