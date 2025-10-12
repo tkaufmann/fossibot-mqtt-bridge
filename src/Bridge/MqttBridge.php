@@ -344,7 +344,6 @@ class MqttBridge
 
         $client->on('disconnect', function () use ($email) {
             $this->logger->warning('Cloud client disconnected', ['email' => $email]);
-            // TODO: Reconnect logic in Phase 3
         });
 
         $client->on('error', function ($error) use ($email) {

@@ -813,8 +813,6 @@ final class Connection
                 $mac = $device->getMqttId();
                 $responseTopics = [
                     "{$mac}/device/response/client/+",    // Catches both /04 and /data
-                    // NOTE: Temporarily removed state subscription due to MQTT race condition
-                    // TODO: Fix MQTT parser buffer handling and re-enable state subscription
                 ];
 
                 foreach ($responseTopics as $topic) {
@@ -1063,9 +1061,6 @@ final class Connection
             'topic' => "{$macAddress}/device/response/state",
             'payload_size' => strlen($payload)
         ]);
-
-        // TODO: Implement state response parsing if needed
-        // For now, just log the reception
     }
 
     /**
