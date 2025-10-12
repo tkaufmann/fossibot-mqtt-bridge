@@ -27,29 +27,24 @@ use InvalidArgumentException;
  * Manages Fossibot API authentication through 4 stages.
  *
  * Stage 1 (s1): Anonymous Authorization
- * - ✅ IMPLEMENTED: s1_performAnonymousAuth(), s1_generateRequest(), s1_generateSignature(),
- *   s1_sendRequest(), s1_parseResponse(), s1_handleError()
  * - Generates anonymous token valid for 10 minutes (600 seconds)
  * - Required for all subsequent API calls
  *
  * Stage 2 (s2): User Login with email/password
- * - TODO: s2_performLogin(), s2_generateRequest(), s2_parseResponse(), s2_handleError()
  * - Requires: AnonymousToken + email/password + DeviceInfo object
  * - Returns: LoginToken (user-specific authentication)
  * - Uses same endpoint with method: "serverless.function.runtime.invoke"
  * - Function target: "router", URL: "user/pub/login"
  *
  * Stage 3 (s3): MQTT Token acquisition
- * - TODO: s3_performMqttAuth(), s3_generateRequest(), s3_parseResponse(), s3_handleError()
  * - Requires: AnonymousToken + LoginToken
  * - Returns: MqttToken for WebSocket authentication
  * - Function target: "router", URL: "common/emqx.getAccessToken"
  *
  * Stage 4 (s4): Device Discovery via MQTT
- * - TODO: s4_connectMqtt(), s4_getDevices(), s4_handleError()
  * - Establishes WebSocket connection to mqtt.sydpower.com:8083/mqtt
  * - Username: MqttToken, Password: "helloyou"
- * - Discovers available devices and returns Device[] array
+ * - Uses public getDevices() method to discover devices via HTTP API
  * - Sets authState to FULLY_CONNECTED on success
  *
  * State Management:
@@ -64,10 +59,10 @@ use InvalidArgumentException;
  * - Sets authState to FAILED on any error
  *
  * Required Value Objects:
- * - ✅ AnonymousAuthRequest, AnonymousToken (Stage 1)
- * - TODO: LoginRequest, LoginToken (Stage 2)
- * - TODO: MqttTokenRequest, MqttToken (Stage 3)
- * - TODO: Device (Stage 4)
+ * - AnonymousAuthRequest, AnonymousToken (Stage 1)
+ * - LoginRequest, LoginToken (Stage 2)
+ * - MqttTokenRequest, MqttToken (Stage 3)
+ * - Device, DeviceListRequest (Stage 4)
  */
 final class Connection
 {
@@ -96,13 +91,13 @@ final class Connection
     {
         $this->logger->info('Starting Fossibot API connection process');
 
-        $this->anonymousToken = $this->s1_performAnonymousAuth();
+        $this->anonymousToken = $this->s1PerformAnonymousAuth();
         $this->logger->info('Stage 1 completed: Anonymous token acquired');
 
-        $this->loginToken = $this->s2_performLogin();
+        $this->loginToken = $this->s2PerformLogin();
         $this->logger->info('Stage 2 completed: Login token acquired');
 
-        $this->mqttToken = $this->s3_performMqttAuth();
+        $this->mqttToken = $this->s3PerformMqttAuth();
         $this->logger->info('Stage 3 completed: MQTT token acquired');
 
         $this->authState = AuthState::FULLY_CONNECTED;
@@ -116,13 +111,13 @@ final class Connection
     {
         $this->logger->info('Starting Fossibot API authentication (token acquisition only)');
 
-        $this->anonymousToken = $this->s1_performAnonymousAuth();
+        $this->anonymousToken = $this->s1PerformAnonymousAuth();
         $this->logger->debug('Stage 1 completed: Anonymous token acquired');
 
-        $this->loginToken = $this->s2_performLogin();
+        $this->loginToken = $this->s2PerformLogin();
         $this->logger->debug('Stage 2 completed: Login token acquired');
 
-        $this->mqttToken = $this->s3_performMqttAuth();
+        $this->mqttToken = $this->s3PerformMqttAuth();
         $this->logger->debug('Stage 3 completed: MQTT token acquired');
 
         $this->authState = AuthState::STAGE3_COMPLETED;
@@ -198,36 +193,36 @@ final class Connection
     }
 
     // Stage 1: Anonymous Authorization
-    private function s1_performAnonymousAuth(): AnonymousToken
+    private function s1PerformAnonymousAuth(): AnonymousToken
     {
         try {
             $this->authState = AuthState::STAGE1_IN_PROGRESS;
             $this->logger->debug('Starting Stage 1: Anonymous Authorization');
 
-            $request = $this->s1_generateRequest();
+            $request = $this->s1GenerateRequest();
             $this->logger->debug('Generated anonymous auth request', [
                 'method'    => $request->method,
                 'timestamp' => $request->timestamp,
             ]);
 
-            $signature = $this->s1_generateSignature($request);
+            $signature = $this->s1GenerateSignature($request);
             $this->logger->debug('Generated HMAC-MD5 signature', [
                 'signature_length' => strlen($signature),
             ]);
 
-            $response = $this->s1_sendRequest($request, $signature);
-            $token    = $this->s1_parseResponse($response);
+            $response = $this->s1SendRequest($request, $signature);
+            $token    = $this->s1ParseResponse($response);
 
             $this->authState = AuthState::STAGE1_COMPLETED;
             $this->logger->debug('Stage 1 completed successfully');
 
             return $token;
         } catch (Exception $e) {
-            $this->s1_handleError($e);
+            $this->s1HandleError($e);
         }
     }
 
-    private function s1_generateRequest(): AnonymousAuthRequest
+    private function s1GenerateRequest(): AnonymousAuthRequest
     {
         return new AnonymousAuthRequest(
             method: "serverless.auth.user.anonymousAuthorize",
@@ -237,7 +232,7 @@ final class Connection
         );
     }
 
-    private function s1_generateSignature(AnonymousAuthRequest $request): string
+    private function s1GenerateSignature(AnonymousAuthRequest $request): string
     {
         return $this->generateSignature($request->toArray());
     }
@@ -258,7 +253,7 @@ final class Connection
         return hash_hmac('md5', $queryString, Config::getClientSecret());
     }
 
-    private function s1_sendRequest(AnonymousAuthRequest $request, string $signature): array
+    private function s1SendRequest(AnonymousAuthRequest $request, string $signature): array
     {
         $headers = [
             'Content-Type: application/json',
@@ -337,7 +332,7 @@ final class Connection
         return $decoded;
     }
 
-    private function s1_parseResponse(array $response): AnonymousToken
+    private function s1ParseResponse(array $response): AnonymousToken
     {
         if (! isset($response['data'])) {
             $this->logger->error('Invalid API response structure', [
@@ -363,7 +358,7 @@ final class Connection
         return new AnonymousToken($token);
     }
 
-    private function s1_handleError(Exception $e): void
+    private function s1HandleError(Exception $e): void
     {
         $this->authState = AuthState::FAILED;
         $this->logger->error('Stage 1 failed', [ 'error' => $e->getMessage() ]);
@@ -371,13 +366,13 @@ final class Connection
     }
 
     // Stage 2: User Login
-    private function s2_performLogin(): LoginToken
+    private function s2PerformLogin(): LoginToken
     {
         try {
             $this->authState = AuthState::STAGE2_IN_PROGRESS;
             $this->logger->debug('Starting Stage 2: User Login');
 
-            $request = $this->s2_generateRequest();
+            $request = $this->s2GenerateRequest();
             $this->logger->debug('Generated login request', [
                 'email' => $this->email,
                 'device_id_length' => strlen($this->deviceId),
@@ -388,19 +383,19 @@ final class Connection
                 'signature_length' => strlen($signature),
             ]);
 
-            $response = $this->s2_sendRequest($request, $signature);
-            $token = $this->s2_parseResponse($response);
+            $response = $this->s2SendRequest($request, $signature);
+            $token = $this->s2ParseResponse($response);
 
             $this->authState = AuthState::STAGE2_COMPLETED;
             $this->logger->debug('Stage 2 completed successfully');
 
             return $token;
         } catch (Exception $e) {
-            $this->s2_handleError($e);
+            $this->s2HandleError($e);
         }
     }
 
-    private function s2_generateRequest(): LoginRequest
+    private function s2GenerateRequest(): LoginRequest
     {
         $deviceInfo = new DeviceInfo(deviceId: $this->deviceId);
 
@@ -429,7 +424,7 @@ final class Connection
         );
     }
 
-    private function s2_sendRequest(LoginRequest $request, string $signature): array
+    private function s2SendRequest(LoginRequest $request, string $signature): array
     {
         $headers = [
             'Content-Type: application/json',
@@ -510,7 +505,7 @@ final class Connection
         return $decoded;
     }
 
-    private function s2_parseResponse(array $response): LoginToken
+    private function s2ParseResponse(array $response): LoginToken
     {
         if (! isset($response['data'])) {
             $this->logger->error('Invalid login response structure', [
@@ -536,7 +531,7 @@ final class Connection
         return new LoginToken($token);
     }
 
-    private function s2_handleError(Exception $e): void
+    private function s2HandleError(Exception $e): void
     {
         $this->authState = AuthState::FAILED;
         $this->logger->error('Stage 2 failed', [ 'error' => $e->getMessage(), 'email' => $this->email ]);
@@ -544,13 +539,13 @@ final class Connection
     }
 
     // Stage 3: MQTT Token acquisition
-    private function s3_performMqttAuth(): MqttToken
+    private function s3PerformMqttAuth(): MqttToken
     {
         try {
             $this->authState = AuthState::STAGE3_IN_PROGRESS;
             $this->logger->debug('Starting Stage 3: MQTT Token acquisition');
 
-            $request = $this->s3_generateRequest();
+            $request = $this->s3GenerateRequest();
             $this->logger->debug('Generated MQTT token request', [
                 'endpoint' => 'common/emqx.getAccessToken',
             ]);
@@ -560,19 +555,19 @@ final class Connection
                 'signature_length' => strlen($signature),
             ]);
 
-            $response = $this->s3_sendRequest($request, $signature);
-            $token = $this->s3_parseResponse($response);
+            $response = $this->s3SendRequest($request, $signature);
+            $token = $this->s3ParseResponse($response);
 
             $this->authState = AuthState::STAGE3_COMPLETED;
             $this->logger->debug('Stage 3 completed successfully');
 
             return $token;
         } catch (Exception $e) {
-            $this->s3_handleError($e);
+            $this->s3HandleError($e);
         }
     }
 
-    private function s3_generateRequest(): MqttTokenRequest
+    private function s3GenerateRequest(): MqttTokenRequest
     {
         $deviceInfo = new DeviceInfo(deviceId: $this->deviceId);
 
@@ -599,7 +594,7 @@ final class Connection
         );
     }
 
-    private function s3_sendRequest(MqttTokenRequest $request, string $signature): array
+    private function s3SendRequest(MqttTokenRequest $request, string $signature): array
     {
         $headers = [
             'Content-Type: application/json',
@@ -678,7 +673,7 @@ final class Connection
         return $decoded;
     }
 
-    private function s3_parseResponse(array $response): MqttToken
+    private function s3ParseResponse(array $response): MqttToken
     {
         if (! isset($response['data'])) {
             $this->logger->error('Invalid MQTT token response structure', [
@@ -704,7 +699,7 @@ final class Connection
         return new MqttToken($token);
     }
 
-    private function s3_handleError(Exception $e): void
+    private function s3HandleError(Exception $e): void
     {
         $this->authState = AuthState::FAILED;
         $this->logger->error('Stage 3 failed', [ 'error' => $e->getMessage() ]);
@@ -712,13 +707,13 @@ final class Connection
     }
 
     // Stage 4: MQTT WebSocket Connection
-    private function s4_connectMqtt(): MqttWebSocketClient
+    private function s4ConnectMqtt(): MqttWebSocketClient
     {
         try {
             $this->authState = AuthState::STAGE4_IN_PROGRESS;
             $this->logger->debug('Starting Stage 4: MQTT WebSocket connection');
 
-            $clientId = $this->s4_generateClientId();
+            $clientId = $this->s4GenerateClientId();
             $this->logger->debug('Generated MQTT client ID', [
                 'client_id' => $clientId,
             ]);
@@ -755,11 +750,11 @@ final class Connection
 
             return $client;
         } catch (Exception $e) {
-            $this->s4_handleError($e);
+            $this->s4HandleError($e);
         }
     }
 
-    private function s4_generateClientId(): string
+    private function s4GenerateClientId(): string
     {
         // Generate shorter hex string for MQTT 23-char limit
         // Format: c_{8-hex}_{6-timestamp} = 1+1+8+1+6 = 17 chars (within 23 limit)
@@ -775,7 +770,7 @@ final class Connection
         return "c_{$hexString}_{$shortTimestamp}";
     }
 
-    private function s4_handleError(Exception $e): void
+    private function s4HandleError(Exception $e): void
     {
         $this->authState = AuthState::FAILED;
 

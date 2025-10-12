@@ -3,6 +3,7 @@
 
 // ABOUTME: CLI entry point for Fossibot MQTT Bridge daemon
 // Loads config, initializes bridge, runs event loop
+// phpcs:disable PSR1.Files.SideEffects.FoundWithSymbols
 
 declare(strict_types=1);
 
