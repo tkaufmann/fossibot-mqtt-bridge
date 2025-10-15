@@ -1,4 +1,8 @@
 {
+  "_comment": "Development configuration example",
+  "_comment_usage": "Copy to config/config.json for local development",
+  "_comment_production": "For production/Docker, see config/production.example.json",
+
   "accounts": [
     {
       "email": "user@example.com",
@@ -6,6 +10,7 @@
       "enabled": true
     }
   ],
+
   "mosquitto": {
     "host": "localhost",
     "port": 1883,
@@ -13,12 +18,16 @@
     "password": null,
     "client_id": "fossibot_bridge"
   },
+
   "daemon": {
+    "_comment": "Relative paths OK for development, will be resolved to project root",
     "log_file": "logs/bridge.log",
     "log_level": "info",
     "pid_file": "bridge.pid"
   },
+
   "health": {
+    "_comment": "Enable health endpoint on port 8080 (required for Docker health checks)",
     "enabled": true,
     "port": 8080
   },

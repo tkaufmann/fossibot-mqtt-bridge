@@ -1,31 +1,63 @@
 # Configuration
 
-## Setup
+## Files
 
-1. Copy example config:
-   ```bash
-   cp config/example.json config/config.json
-   ```
+### `example.json` - Development Configuration
+Template for **local development** with relative paths.
 
-2. Edit `config/config.json`:
-   - Add your Fossibot account credentials
-   - See `.env` for working test credentials
-   - Multiple accounts: add more objects to `accounts` array
-
-3. Test config:
-   ```bash
-   php test_config_load.php
-   ```
-
-## Development
-
-For development, use credentials from `.env`:
+**Usage:**
 ```bash
-FOSSIBOT_EMAIL=your-email@example.com
-FOSSIBOT_PASSWORD=your-password
+cp config/example.json config/config.json
+# Edit config/config.json with your credentials
+php daemon/fossibot-bridge.php --config config/config.json
 ```
 
-You can copy these into `config/config.json`.
+### `production.example.json` - Production/Docker Configuration
+Template for **production deployment** with absolute paths.
+
+**Usage:**
+```bash
+# Copy to your production location
+cp config/production.example.json /srv/docker/fossibot/mounts/fossibot/config.json
+# Edit with production credentials and settings
+```
+
+---
+
+## ⚠️ Required Sections for Production
+
+### `health` - Docker Health Checks
+**Required** for Docker to monitor container health:
+```json
+"health": {
+  "enabled": true,
+  "port": 8080
+}
+```
+
+Without this section, Docker health checks will fail with "Connection refused" and the container will be marked as `unhealthy`.
+
+### `cache` - Token Persistence
+**Required** for efficient token caching:
+```json
+"cache": {
+  "directory": "/var/lib/fossibot",
+  "token_ttl_safety_margin": 300,
+  "device_list_ttl": 86400,
+  "device_refresh_interval": 86400
+}
+```
+
+Without this section, the bridge will re-authenticate on every restart instead of using cached tokens.
+
+---
+
+## Validation
+
+Test your config before starting:
+```bash
+php daemon/fossibot-bridge.php --config config/config.json --validate
+```
 
 ## Configuration Options
 

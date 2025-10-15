@@ -1,0 +1,53 @@
+{
+  "_comment": "Production configuration template for Fossibot MQTT Bridge",
+  "_comment_usage": "Copy to your production location (e.g., /srv/docker/fossibot/mounts/fossibot/config.json)",
+
+  "accounts": [
+    {
+      "email": "user@example.com",
+      "password": "your-password-here",
+      "enabled": true
+    }
+  ],
+
+  "mosquitto": {
+    "host": "10.0.0.100",
+    "port": 1883,
+    "username": "mqtt-user",
+    "password": "mqtt-password",
+    "client_id": "fossibot-bridge"
+  },
+
+  "daemon": {
+    "_comment": "Use absolute paths in production (Docker: /var/log/fossibot, /var/lib/fossibot)",
+    "log_file": "/var/log/fossibot/bridge.log",
+    "log_level": "info",
+    "pid_file": "/var/lib/fossibot/bridge.pid"
+  },
+
+  "health": {
+    "_comment": "REQUIRED for Docker health checks! Do not disable in production.",
+    "enabled": true,
+    "port": 8080
+  },
+
+  "cache": {
+    "_comment": "REQUIRED for token caching and device list persistence",
+    "directory": "/var/lib/fossibot",
+    "token_ttl_safety_margin": 300,
+    "device_list_ttl": 86400,
+    "device_refresh_interval": 86400
+  },
+
+  "bridge": {
+    "status_publish_interval": 30,
+    "reconnect_delay_min": 5,
+    "reconnect_delay_max": 60
+  },
+
+  "debug": {
+    "_comment": "Set to false in production to reduce log volume",
+    "log_raw_registers": false,
+    "log_update_source": false
+  }
+}
