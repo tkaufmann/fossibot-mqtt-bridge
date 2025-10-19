@@ -43,10 +43,17 @@ Without this section, Docker health checks will fail with "Connection refused" a
 "cache": {
   "directory": "/var/lib/fossibot",
   "token_ttl_safety_margin": 300,
+  "max_token_ttl": 86400,
   "device_list_ttl": 86400,
   "device_refresh_interval": 86400
 }
 ```
+
+**Important settings:**
+- `max_token_ttl`: Maximum TTL for any cached token (default: 86400s = 1 day). Caps unrealistic JWT expiry claims.
+  - Fossibot's S2 login token claims 10-year expiry but is invalidated server-side much sooner
+  - Without this cap, the bridge would cache tokens for 10 years and fail when they're invalidated
+  - With 1-day cap, the bridge re-authenticates daily, preventing stale token issues
 
 Without this section, the bridge will re-authenticate on every restart instead of using cached tokens.
 

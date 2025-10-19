@@ -277,9 +277,12 @@ fossibot-bridge-ctl logs 1000 | grep -i "error"
 "cache": {
   "device_list_ttl": 86400,           // 24h (default)
   "device_refresh_interval": 86400,   // 24h refresh
-  "token_ttl_safety_margin": 300      // 5min safety margin
+  "token_ttl_safety_margin": 300,     // 5min safety margin
+  "max_token_ttl": 86400              // 24h max (caps unrealistic JWT expiry)
 }
 ```
+
+**Important**: `max_token_ttl` caps token cache TTL regardless of JWT expiry. Fossibot's S2 login token claims 10-year expiry but is invalidated server-side much sooner. Default 1 day prevents stale token issues.
 
 ### Resource Limits
 
