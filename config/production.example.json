@@ -35,6 +35,8 @@
     "_comment": "REQUIRED for token caching and device list persistence",
     "directory": "/var/lib/fossibot",
     "token_ttl_safety_margin": 300,
+    "max_token_ttl": 86400,
+    "_comment_max_token_ttl": "Maximum TTL for any token (1 day = 86400s). Prevents unrealistic JWT expiry claims.",
     "device_list_ttl": 86400,
     "device_refresh_interval": 86400
   },

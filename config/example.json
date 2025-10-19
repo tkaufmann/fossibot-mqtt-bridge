@@ -34,6 +34,8 @@
   "cache": {
     "directory": "/var/lib/fossibot",
     "token_ttl_safety_margin": 300,
+    "max_token_ttl": 86400,
+    "_comment_max_token_ttl": "Cap token cache TTL to 1 day (86400s) regardless of JWT expiry",
     "device_list_ttl": 86400,
     "device_refresh_interval": 86400
   },

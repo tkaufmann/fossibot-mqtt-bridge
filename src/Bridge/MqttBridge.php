@@ -99,7 +99,8 @@ class MqttBridge
 
             // Token cache
             $tokenTtlSafety = $this->config['cache']['token_ttl_safety_margin'] ?? 300;
-            $this->tokenCache = new TokenCache($cacheDir, $tokenTtlSafety, $this->logger);
+            $maxTokenTtl = $this->config['cache']['max_token_ttl'] ?? 86400; // 1 day default
+            $this->tokenCache = new TokenCache($cacheDir, $tokenTtlSafety, $maxTokenTtl, $this->logger);
 
             // Device cache
             $deviceTtl = $this->config['cache']['device_list_ttl'] ?? 86400;

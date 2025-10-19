@@ -19,19 +19,23 @@ class TokenCache
     private string $cacheDir;
     private LoggerInterface $logger;
     private int $safetyMargin;
+    private int $maxTokenTtl;
 
     /**
      * @param string $cacheDir Directory for cache files (will be created if missing)
      * @param int $safetyMargin Seconds before expiry to treat token as expired (default: 300 = 5min)
+     * @param int $maxTokenTtl Maximum TTL for any token in seconds (default: 86400 = 1 day)
      * @param LoggerInterface|null $logger
      */
     public function __construct(
         string $cacheDir,
         int $safetyMargin = 300,
+        int $maxTokenTtl = 86400,
         ?LoggerInterface $logger = null
     ) {
         $this->cacheDir = rtrim($cacheDir, '/');
         $this->safetyMargin = $safetyMargin;
+        $this->maxTokenTtl = $maxTokenTtl;
         $this->logger = $logger ?? new NullLogger();
 
         if (!is_dir($this->cacheDir)) {
@@ -101,10 +105,30 @@ class TokenCache
     ): void {
         $cached = $this->readFromDisk($email) ?? [];
 
+        // Cap TTL to max_token_ttl to prevent unrealistic JWT expiry claims
+        $now = time();
+        $ttl = $expiresAt - $now;
+        $cappedExpiresAt = $expiresAt;
+        $wasCapped = false;
+
+        if ($ttl > $this->maxTokenTtl) {
+            $cappedExpiresAt = $now + $this->maxTokenTtl;
+            $wasCapped = true;
+
+            $this->logger->debug('Token TTL capped to max_token_ttl', [
+                'email' => $email,
+                'stage' => $stage,
+                'original_ttl' => $ttl,
+                'original_expires_at' => date('Y-m-d H:i:s', $expiresAt),
+                'capped_ttl' => $this->maxTokenTtl,
+                'capped_expires_at' => date('Y-m-d H:i:s', $cappedExpiresAt)
+            ]);
+        }
+
         $cached[$stage] = [
             'token' => $token,
-            'expires_at' => $expiresAt,
-            'cached_at' => time()
+            'expires_at' => $cappedExpiresAt,
+            'cached_at' => $now
         ];
 
         $this->writeToDisk($email, $cached);
@@ -112,8 +136,9 @@ class TokenCache
         $this->logger->info('Token cached', [
             'email' => $email,
             'stage' => $stage,
-            'expires_at' => date('Y-m-d H:i:s', $expiresAt),
-            'ttl' => $expiresAt - time()
+            'expires_at' => date('Y-m-d H:i:s', $cappedExpiresAt),
+            'ttl' => $cappedExpiresAt - $now,
+            'capped' => $wasCapped
         ]);
     }
 
