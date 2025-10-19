@@ -322,12 +322,7 @@ class MqttBridge
         $connectedAccounts = count($this->cloudClients);
         $this->metrics->setAccountMetrics($totalAccounts, $connectedAccounts);
 
-        // Count total devices
-        $totalDevices = 0;
-        foreach ($this->cloudClients as $client) {
-            $totalDevices += count($client->getDevices());
-        }
-        $this->metrics->setDeviceMetrics($totalDevices, $totalDevices); // Assume all online initially
+        // Note: Device metrics will be updated in 'connect' event after devices are loaded
     }
 
     private function registerCloudClientEvents(AsyncCloudClient $client, string $email): void
@@ -343,6 +338,9 @@ class MqttBridge
                 // Query initial settings via FC 03 (Holding Registers)
                 $this->queryHoldingRegisters($device->getMqttId(), $client);
             }
+
+            // Update device metrics now that devices are loaded
+            $this->updateDeviceMetrics();
         });
 
         $client->on('message', function ($topic, $payload) use ($email) {
@@ -946,6 +944,27 @@ class MqttBridge
                 'last_seconds' => $stats['last']
             ]);
         }
+    }
+
+    /**
+     * Update device metrics for health monitoring.
+     * Called after devices are loaded to ensure accurate counts.
+     */
+    private function updateDeviceMetrics(): void
+    {
+        $totalDevices = 0;
+        $onlineDevices = 0;
+
+        foreach ($this->cloudClients as $client) {
+            foreach ($client->getDevices() as $device) {
+                $totalDevices++;
+                if ($device->isOnline()) {
+                    $onlineDevices++;
+                }
+            }
+        }
+
+        $this->metrics->setDeviceMetrics($totalDevices, $onlineDevices);
     }
 
     /**
