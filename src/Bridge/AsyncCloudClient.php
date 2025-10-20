@@ -719,6 +719,9 @@ class AsyncCloudClient extends EventEmitter
 
         return $this->fetchDevices($this->browser, $this->anonymousToken, $this->loginToken)
             ->then(function (array $devices): PromiseInterface {
+                // Track mqtt_state transitions before updating
+                $this->trackDeviceStateTransitions($devices);
+
                 $this->devices = $devices;
 
                 // Cache device list
@@ -1222,5 +1225,64 @@ class AsyncCloudClient extends EventEmitter
     private function generateDeviceId(): string
     {
         return bin2hex(random_bytes(16));
+    }
+
+    /**
+     * Track mqtt_state transitions for all devices.
+     * Compares new device states with existing ones and logs changes.
+     *
+     * Non-blocking: Only uses in-memory operations and async logger.
+     *
+     * Note: Skips transition tracking if existing devices came from cache
+     * (onlineStatus=0), as cache doesn't preserve mqtt_state.
+     *
+     * @param \Fossibot\ValueObjects\Device[] $newDevices Fresh device list from API
+     */
+    private function trackDeviceStateTransitions(array $newDevices): void
+    {
+        // Skip if no existing devices to compare against
+        if (empty($this->devices)) {
+            return;
+        }
+
+        // Build map of existing devices by MAC for fast lookup
+        $existingDevicesByMac = [];
+        foreach ($this->devices as $device) {
+            $existingDevicesByMac[$device->getMqttId()] = $device;
+        }
+
+        // Check each new device for state changes
+        foreach ($newDevices as $newDevice) {
+            $mac = $newDevice->getMqttId();
+            $existingDevice = $existingDevicesByMac[$mac] ?? null;
+
+            // Skip if this is a new device (first discovery)
+            if ($existingDevice === null) {
+                continue;
+            }
+
+            // Skip if old state is invalid (came from cache with onlineStatus=0)
+            // We can't trust the old value, so no meaningful transition to report
+            $oldStatus = $existingDevice->onlineStatus;
+            if ($oldStatus === 0 && !$existingDevice->isOnline()) {
+                // Likely from cache deserialization, skip
+                continue;
+            }
+
+            // Compare mqtt_state
+            $oldOnline = $existingDevice->isOnline();
+            $newOnline = $newDevice->isOnline();
+
+            if ($oldOnline !== $newOnline) {
+                $transition = $oldOnline ? 'online → offline' : 'offline → online';
+                $this->logger->warning('Device state transition detected', [
+                    'mac' => $mac,
+                    'name' => $newDevice->deviceName,
+                    'transition' => $transition,
+                    'old_state' => $oldOnline ? 'online' : 'offline',
+                    'new_state' => $newOnline ? 'online' : 'offline',
+                ]);
+            }
+        }
     }
 }
