@@ -447,7 +447,10 @@ class MqttBridge
                 // Setup status publish timer (every 60s)
                 $this->loop->addPeriodicTimer(
                     $this->config['bridge']['status_publish_interval'] ?? 60,
-                    fn() => $this->publishBridgeStatus()
+                    function () {
+                        $this->publishBridgeStatus();
+                        $this->updateDeviceMetrics();
+                    }
                 );
 
                 // Setup spontaneous update stats logging (every 60s)
@@ -949,16 +952,31 @@ class MqttBridge
     /**
      * Update device metrics for health monitoring.
      * Called after devices are loaded to ensure accurate counts.
+     *
+     * Devices are considered online if they sent updates within last 6 minutes.
      */
     private function updateDeviceMetrics(): void
     {
+        // Guard: Skip if stateManager not ready yet
+        if ($this->stateManager === null) {
+            return;
+        }
+
         $totalDevices = 0;
         $onlineDevices = 0;
+        $offlineThreshold = 360; // 6 minutes (2× spontaneous update interval)
 
         foreach ($this->cloudClients as $client) {
             foreach ($client->getDevices() as $device) {
                 $totalDevices++;
-                if ($device->isOnline()) {
+
+                $mac = $device->getMqttId();
+                $state = $this->stateManager->getDeviceState($mac);
+
+                // Check if last update was recent
+                $secondsSinceUpdate = time() - $state->lastFullUpdate->getTimestamp();
+
+                if ($secondsSinceUpdate < $offlineThreshold) {
                     $onlineDevices++;
                 }
             }

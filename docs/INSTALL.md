@@ -224,6 +224,8 @@ fossibot-bridge-ctl health
 }
 ```
 
+**Note**: Devices are considered online if they sent updates within the last 6 minutes. The status is updated every 60 seconds.
+
 ---
 
 ## Security Considerations

@@ -3,7 +3,7 @@
         'name' => 'tkaufmann/fossibot-php',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'dbb9153099974c52113b5ada7f3fd7e20cab34bd',
+        'reference' => 'b03222134745a1e317e1ce878e1531b1de14a8b9',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -508,7 +508,7 @@
         'tkaufmann/fossibot-php' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'dbb9153099974c52113b5ada7f3fd7e20cab34bd',
+            'reference' => 'b03222134745a1e317e1ce878e1531b1de14a8b9',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),

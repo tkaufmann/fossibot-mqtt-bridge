@@ -4,17 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Health endpoint**: Device online status now based on actual updates instead of API `mqtt_state`
+  - Devices considered online if updates received within last 6 minutes
+  - Status updated every 60 seconds
+  - More reliable than Fossibot API's `mqtt_state` field which is often incorrect
+
 ### Fixed
 - **Token caching**: Added `max_token_ttl` (default: 1 day) to cap token cache TTL regardless of JWT expiry
   - Fossibot's S2 login token claims 10-year expiry in JWT but is invalidated server-side sooner
   - Without cap, bridge would cache token for 10 years and fail when server invalidates it
   - With 1-day cap, bridge re-authenticates daily, preventing stale token issues
   - Config option: `cache.max_token_ttl` (seconds, default: 86400)
+- **Health endpoint**: Device metrics now updated correctly after initial device discovery
+  - Previously showed 0 devices due to race condition during startup
 
-### Changed
-- Token cache now logs `"capped": true` when TTL is reduced from JWT expiry
-- S2 login token: Capped from 10 years → 1 day
-- S3 MQTT token: Capped from 3 days → 1 day (if > max_token_ttl)
+### Removed
+- API `mqtt_state` transition tracking (unreliable due to intermittent API failures)
 
 ## [2.0.0] - 2025-10-19
 
