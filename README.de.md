@@ -199,6 +199,13 @@ Beispiel für Topic `fossibot/7C2C67AB5F0E/state`:
   "maxChargingCurrent": 15,
   "dischargeLowerLimit": 10.0,
   "acChargingUpperLimit": 95.0,
+  "acSilentCharging": false,
+  "usbStandbyTime": 0,
+  "acStandbyTime": 0,
+  "dcStandbyTime": 0,
+  "screenRestTime": 0,
+  "acChargingTimer": 0,
+  "sleepTime": 5,
   "timestamp": "2025-10-05T14:23:40+00:00"
 }
 ```
@@ -210,9 +217,16 @@ Die Nachrichten werden mit QoS 1 und Retained-Flag publiziert, sodass neue Subsc
 - `inputWatts`: Eingangsleistung (z.B. Solar, AC-Ladung)
 - `outputWatts`: Ausgangsleistung (alle Ausgänge zusammen)
 - `usbOutput`, `acOutput`, `dcOutput`, `ledOutput`: Status der Ausgänge (true/false)
-- `maxChargingCurrent`: Maximaler Ladestrom in Ampere
-- `dischargeLowerLimit`: Untere Entladegrenze in Prozent
-- `acChargingUpperLimit`: Obere Ladegrenze bei AC-Ladung in Prozent
+- `maxChargingCurrent`: Maximaler Ladestrom in Ampere (1-20A)
+- `dischargeLowerLimit`: Untere Entladegrenze in Prozent (0-100%)
+- `acChargingUpperLimit`: Obere Ladegrenze bei AC-Ladung in Prozent (0-100%)
+- `acSilentCharging`: AC-Leise-Lademodus aktiv (true/false)
+- `usbStandbyTime`: USB-Abschaltzeit in Minuten (0=deaktiviert, 3, 5, 10, 30)
+- `acStandbyTime`: AC-Abschaltzeit in Minuten (0=deaktiviert, 480, 960, 1440)
+- `dcStandbyTime`: DC-Abschaltzeit in Minuten (0=deaktiviert, 480, 960, 1440)
+- `screenRestTime`: Display-Timeout in Sekunden (0=immer an, 180, 300, 600, 1800)
+- `acChargingTimer`: AC-Lade-Timer in Minuten (0=deaktiviert, 1-1439)
+- `sleepTime`: Standby-Timeout in Minuten (5, 10, 30, 480) - **niemals 0!**
 
 ### Geräte steuern
 
@@ -251,14 +265,38 @@ mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"led_o
 **Einstellungen ändern:**
 ```bash
 # Maximalen Ladestrom setzen (1-20 Ampere)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_max_charging_current","value":15}'
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_charging_current","amperes":15}'
 
 # Untere Entladegrenze setzen (0-100%)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_discharge_lower_limit","value":10.0}'
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_discharge_limit","percentage":10.0}'
 
-# Obere Ladegrenze setzen (0-100%)
-mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_upper_limit","value":95.0}'
+# Obere AC-Ladegrenze setzen (0-100%)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_limit","percentage":95.0}'
+
+# AC-Leise-Lademodus aktivieren/deaktivieren
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_silent_charging","enabled":true}'
+
+# USB-Abschaltzeit setzen (0, 3, 5, 10 oder 30 Minuten)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_usb_standby_time","minutes":10}'
+
+# AC-Abschaltzeit setzen (0, 480, 960 oder 1440 Minuten)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_standby_time","minutes":480}'
+
+# DC-Abschaltzeit setzen (0, 480, 960 oder 1440 Minuten)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_dc_standby_time","minutes":480}'
+
+# Display-Timeout setzen (0, 180, 300, 600 oder 1800 Sekunden)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_screen_rest_time","seconds":300}'
+
+# AC-Lade-Timer setzen (0-1439 Minuten, 0=deaktiviert)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_timer","minutes":244}'  # 4h 4min
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_ac_charging_timer","minutes":0}'    # Timer deaktivieren
+
+# Standby-Timeout setzen (5, 10, 30 oder 480 Minuten - NIEMALS 0!)
+mosquitto_pub -h localhost -t fossibot/7C2C67AB5F0E/command -m '{"action":"set_sleep_time","minutes":10}'
 ```
+
+**⚠️ Warnung**: Niemals `sleepTime` auf 0 setzen - das kann das Gerät unbrauchbar machen! Die Bridge validiert dies automatisch.
 
 ### Bridge Status
 
