@@ -73,6 +73,7 @@ class AsyncCloudClient extends EventEmitter
     private ?string $anonymousToken = null;
     private ?string $loginToken = null;
     private ?string $mqttToken = null;
+    private ?string $mqttHost = null;
     private string $deviceId;
 
     // HTTP Browser (must persist to prevent GC cleanup during async requests)
@@ -472,9 +473,15 @@ class AsyncCloudClient extends EventEmitter
         $this->logger->debug('Connecting MQTT client via WebSocket transport');
 
         // Create WebSocket transport
+        // Use MQTT host from API response (or fallback to default)
+        $mqttHost = $this->mqttHost ?? 'mqtt.sydpower.com';
+        $websocketUrl = "ws://{$mqttHost}:8083/mqtt";
+
+        $this->logger->info('Connecting to MQTT broker', ['url' => $websocketUrl]);
+
         $transport = new WebSocketTransport(
             $this->loop,
-            'ws://mqtt.sydpower.com:8083/mqtt',
+            $websocketUrl,
             ['mqtt'],
             $this->logger
         );
@@ -1006,6 +1013,15 @@ class AsyncCloudClient extends EventEmitter
 
                 if (!isset($data['data']['access_token'])) {
                     throw new RuntimeException('Stage 3: Missing access_token in response');
+                }
+
+                // Extract MQTT host from API response
+                if (isset($data['data']['mqtt_host'])) {
+                    $this->mqttHost = $data['data']['mqtt_host'];
+                    $this->logger->info('MQTT host from API', ['mqtt_host' => $this->mqttHost]);
+                } else {
+                    $this->logger->warning('No mqtt_host in API response, using default');
+                    $this->mqttHost = 'mqtt.sydpower.com'; // Fallback
                 }
 
                 $token = $data['data']['access_token'];
