@@ -176,6 +176,27 @@ class BridgeMetrics
     }
 
     /**
+     * Get devices that haven't sent updates within threshold.
+     *
+     * @param int $threshold Seconds without update to consider device stale (default: 600 = 10min)
+     * @return array MAC => seconds since last update
+     */
+    public function getStaleDevices(int $threshold = 600): array
+    {
+        $staleDevices = [];
+        $now = time();
+
+        foreach ($this->lastSpontaneousUpdate as $mac => $lastUpdate) {
+            $secondsSince = $now - $lastUpdate;
+            if ($secondsSince > $threshold) {
+                $staleDevices[$mac] = $secondsSince;
+            }
+        }
+
+        return $staleDevices;
+    }
+
+    /**
      * Parse PHP memory_limit string to bytes.
      */
     private function parseMemoryLimit(string $limit): int

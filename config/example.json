@@ -43,7 +43,23 @@
     "status_publish_interval": 60,
     "device_poll_interval": 30,
     "reconnect_delay_min": 5,
-    "reconnect_delay_max": 60
+    "reconnect_delay_max": 60,
+    "proactive_token_refresh": {
+      "_comment": "Proactively check and refresh MQTT tokens before they expire",
+      "enabled": true,
+      "check_interval": 1800,
+      "_comment_check_interval": "Check every 30 minutes (1800s)",
+      "safety_margin": 3600,
+      "_comment_safety_margin": "Refresh if token expires within 1 hour (3600s)"
+    },
+    "data_flow_watchdog": {
+      "_comment": "Detect stale device connections by monitoring data flow",
+      "enabled": true,
+      "check_interval": 120,
+      "_comment_check_interval": "Check every 2 minutes (120s)",
+      "stale_threshold": 600,
+      "_comment_stale_threshold": "Trigger reconnect if no updates for 10 minutes (600s)"
+    }
   },
   "debug": {
     "log_raw_registers": false,

@@ -74,6 +74,12 @@ class MqttBridge
     /** @var array<string, int> MAC => timestamp of last info log */
     private array $lastLogTimePerDevice = [];
 
+    // Data flow watchdog
+    private ?TimerInterface $watchdogTimer = null;
+    private int $watchdogInterval = 120;        // Check every 2 minutes
+    private int $watchdogThreshold = 600;       // Alert if no updates for 10 minutes
+    private bool $watchdogEnabled = true;
+
     public function __construct(
         array $config,
         ?LoggerInterface $logger = null
@@ -118,6 +124,14 @@ class MqttBridge
 
         // Connect metrics to state manager for spontaneous update tracking
         $this->stateManager->setMetrics($this->metrics);
+
+        // Configure data flow watchdog from config
+        if (isset($this->config['bridge']['data_flow_watchdog'])) {
+            $watchdogConfig = $this->config['bridge']['data_flow_watchdog'];
+            $this->watchdogEnabled = $watchdogConfig['enabled'] ?? true;
+            $this->watchdogInterval = $watchdogConfig['check_interval'] ?? 120;
+            $this->watchdogThreshold = $watchdogConfig['stale_threshold'] ?? 600;
+        }
     }
 
     /**
@@ -200,12 +214,87 @@ class MqttBridge
     }
 
     /**
+     * Start data flow watchdog timer.
+     *
+     * Periodically checks if devices are still sending spontaneous updates.
+     * If a device goes stale, triggers reconnection.
+     */
+    private function startDataFlowWatchdog(): void
+    {
+        if (!$this->watchdogEnabled) {
+            $this->logger->info('Data flow watchdog disabled by config');
+            return;
+        }
+
+        if ($this->watchdogTimer !== null) {
+            $this->loop->cancelTimer($this->watchdogTimer);
+        }
+
+        $this->watchdogTimer = $this->loop->addPeriodicTimer(
+            $this->watchdogInterval,
+            function (): void {
+                $this->checkDataFlow();
+            }
+        );
+
+        $this->logger->info('Data flow watchdog started', [
+            'interval' => $this->watchdogInterval . 's',
+            'threshold' => $this->watchdogThreshold . 's'
+        ]);
+    }
+
+    /**
+     * Stop data flow watchdog timer.
+     */
+    private function stopDataFlowWatchdog(): void
+    {
+        if ($this->watchdogTimer !== null) {
+            $this->loop->cancelTimer($this->watchdogTimer);
+            $this->watchdogTimer = null;
+            $this->logger->debug('Data flow watchdog stopped');
+        }
+    }
+
+    /**
+     * Check if devices are still sending updates.
+     *
+     * If any device hasn't sent updates within threshold, trigger reconnection.
+     */
+    private function checkDataFlow(): void
+    {
+        $staleDevices = $this->metrics->getStaleDevices($this->watchdogThreshold);
+
+        if (empty($staleDevices)) {
+            $this->logger->debug('Data flow watchdog: All devices active');
+            return;
+        }
+
+        $this->logger->warning('Data flow watchdog: Stale devices detected', [
+            'stale_count' => count($staleDevices),
+            'stale_devices' => array_map(
+                fn($seconds) => gmdate('H:i:s', (int)$seconds),
+                $staleDevices
+            )
+        ]);
+
+        // Trigger reconnection for all cloud clients
+        // (Token expiry is the most likely cause of stale data)
+        foreach ($this->cloudClients as $email => $client) {
+            $this->logger->info('Triggering reconnection due to stale data', ['email' => $email]);
+            $client->reconnect(true); // Force re-authentication
+        }
+    }
+
+    /**
      * Shutdown bridge gracefully.
      */
     public function shutdown(): void
     {
         $this->logger->info('MqttBridge shutting down...');
         $this->running = false;
+
+        // Stop watchdog timer
+        $this->stopDataFlowWatchdog();
 
         // Publish offline status to broker
         if ($this->localBrokerClient !== null) {
@@ -294,6 +383,16 @@ class MqttBridge
             }
             if ($this->deviceCache !== null) {
                 $client->setDeviceCache($this->deviceCache);
+            }
+
+            // Configure proactive token refresh from config
+            if (isset($this->config['bridge']['proactive_token_refresh'])) {
+                $tokenConfig = $this->config['bridge']['proactive_token_refresh'];
+                $client->setTokenRefreshConfig(
+                    $tokenConfig['enabled'] ?? true,
+                    $tokenConfig['check_interval'] ?? 1800,
+                    $tokenConfig['safety_margin'] ?? 3600
+                );
             }
 
             // Register event handlers
@@ -463,6 +562,9 @@ class MqttBridge
                     $this->pollHoldingRegisters();
                 });
 
+                // Start data flow watchdog
+                $this->startDataFlowWatchdog();
+
                 // Polling disabled - device sends spontaneous updates every ~3 minutes
                 // Test results:
                 //   5s:  Rate-limited (no responses)
@@ -617,6 +719,11 @@ class MqttBridge
 
             // Update state with register type
             $this->stateManager->updateDeviceState($mac, $registers, $registerType, $topic, $wasCommandTriggered);
+
+            // Record spontaneous updates for watchdog monitoring
+            if (!$wasCommandTriggered) {
+                $this->metrics->recordSpontaneousUpdate($mac);
+            }
 
             // Get state and convert to JSON
             $state = $this->stateManager->getDeviceState($mac);

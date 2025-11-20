@@ -66,6 +66,12 @@ class AsyncCloudClient extends EventEmitter
     private ?int $mqttTokenExpiresAt = null;
     private ?int $loginTokenExpiresAt = null;
 
+    // Proactive token refresh
+    private ?TimerInterface $tokenCheckTimer = null;
+    private int $tokenCheckInterval = 1800; // 30 minutes
+    private int $tokenCheckSafetyMargin = 3600; // 1 hour
+    private bool $tokenCheckEnabled = true;
+
     // Running state (prevents auto-reconnect during shutdown)
     private bool $running = true;
 
@@ -113,6 +119,16 @@ class AsyncCloudClient extends EventEmitter
     }
 
     /**
+     * Configure proactive token refresh settings.
+     */
+    public function setTokenRefreshConfig(bool $enabled, int $interval, int $safetyMargin): void
+    {
+        $this->tokenCheckEnabled = $enabled;
+        $this->tokenCheckInterval = $interval;
+        $this->tokenCheckSafetyMargin = $safetyMargin;
+    }
+
+    /**
      * Connect to Fossibot Cloud (async).
      *
      * @return PromiseInterface Resolves when connected
@@ -145,6 +161,10 @@ class AsyncCloudClient extends EventEmitter
             ->then(function (): PromiseInterface {
                 $this->emit('connect');
                 $this->logger->info('AsyncCloudClient connected successfully');
+
+                // Start proactive token check timer
+                $this->startTokenCheckTimer();
+
                 return resolve(null);
             })
             ->catch(function (Exception $e): PromiseInterface {
@@ -165,6 +185,9 @@ class AsyncCloudClient extends EventEmitter
 
         $this->running = false; // Prevent auto-reconnect
         $this->connected = false;
+
+        // Stop token check timer
+        $this->stopTokenCheckTimer();
 
         // Disconnect MQTT client
         if ($this->mqttClient !== null) {
@@ -392,8 +415,11 @@ class AsyncCloudClient extends EventEmitter
 
     /**
      * Checks if cached authentication tokens are still valid.
+     *
+     * @param int $safetyMargin Seconds before expiry to consider token invalid (default: 0)
+     * @return bool True if all tokens are valid with safety margin
      */
-    private function hasValidTokens(): bool
+    private function hasValidTokens(int $safetyMargin = 0): bool
     {
         // Check if we have MQTT token
         if ($this->mqttToken === null) {
@@ -401,21 +427,30 @@ class AsyncCloudClient extends EventEmitter
         }
 
         $now = time();
+        $expiryThreshold = $now + $safetyMargin;
 
         // Check MQTT token expiry (primary concern, ~3 days)
-        if ($this->mqttTokenExpiresAt !== null && $this->mqttTokenExpiresAt <= $now) {
-            $this->logger->debug('MQTT token expired', [
+        if ($this->mqttTokenExpiresAt !== null && $this->mqttTokenExpiresAt <= $expiryThreshold) {
+            $ttlRemaining = $this->mqttTokenExpiresAt - $now;
+            $this->logger->debug('MQTT token expired or expiring soon', [
                 'email' => $this->email,
-                'expired_at' => date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
+                'expires_at' => date('Y-m-d H:i:s', $this->mqttTokenExpiresAt),
+                'ttl_remaining' => $ttlRemaining,
+                'safety_margin' => $safetyMargin,
+                'expired' => $ttlRemaining <= 0
             ]);
             return false;
         }
 
         // Check login token expiry (~14 years, rarely expires)
-        if ($this->loginTokenExpiresAt !== null && $this->loginTokenExpiresAt <= $now) {
-            $this->logger->debug('Login token expired', [
+        if ($this->loginTokenExpiresAt !== null && $this->loginTokenExpiresAt <= $expiryThreshold) {
+            $ttlRemaining = $this->loginTokenExpiresAt - $now;
+            $this->logger->debug('Login token expired or expiring soon', [
                 'email' => $this->email,
-                'expired_at' => date('Y-m-d H:i:s', $this->loginTokenExpiresAt)
+                'expires_at' => date('Y-m-d H:i:s', $this->loginTokenExpiresAt),
+                'ttl_remaining' => $ttlRemaining,
+                'safety_margin' => $safetyMargin,
+                'expired' => $ttlRemaining <= 0
             ]);
             return false;
         }
@@ -440,6 +475,88 @@ class AsyncCloudClient extends EventEmitter
         return $this->anonymousToken !== null
             && $this->loginToken !== null
             && $this->mqttToken !== null;
+    }
+
+    /**
+     * Starts periodic token expiry check timer.
+     *
+     * Checks every tokenCheckInterval if tokens are expiring soon
+     * (within tokenCheckSafetyMargin) and triggers proactive refresh.
+     */
+    private function startTokenCheckTimer(): void
+    {
+        if (!$this->tokenCheckEnabled) {
+            $this->logger->info('Proactive token check disabled by config');
+            return;
+        }
+
+        // Cancel existing timer
+        if ($this->tokenCheckTimer !== null) {
+            $this->loop->cancelTimer($this->tokenCheckTimer);
+        }
+
+        $this->tokenCheckTimer = $this->loop->addPeriodicTimer(
+            $this->tokenCheckInterval,
+            function (): void {
+                $this->checkAndRefreshTokens();
+            }
+        );
+
+        $this->logger->info('Token check timer started', [
+            'interval' => $this->tokenCheckInterval . 's',
+            'safety_margin' => $this->tokenCheckSafetyMargin . 's'
+        ]);
+    }
+
+    /**
+     * Stops token check timer.
+     */
+    private function stopTokenCheckTimer(): void
+    {
+        if ($this->tokenCheckTimer !== null) {
+            $this->loop->cancelTimer($this->tokenCheckTimer);
+            $this->tokenCheckTimer = null;
+            $this->logger->debug('Token check timer stopped');
+        }
+    }
+
+    /**
+     * Periodic check if tokens are expiring soon and trigger proactive refresh.
+     */
+    private function checkAndRefreshTokens(): void
+    {
+        // Skip if reconnection already in progress
+        if ($this->reconnecting) {
+            $this->logger->debug('Token check skipped - reconnection in progress');
+            return;
+        }
+
+        $this->logger->debug('Periodic token check triggered');
+
+        // Check if tokens need refresh (using safety margin)
+        if (!$this->hasValidTokens($this->tokenCheckSafetyMargin)) {
+            $this->logger->warning('Tokens expiring soon, triggering proactive refresh', [
+                'mqtt_expires_at' => $this->mqttTokenExpiresAt
+                    ? date('Y-m-d H:i:s', $this->mqttTokenExpiresAt)
+                    : 'unknown',
+                'mqtt_ttl_remaining' => $this->mqttTokenExpiresAt
+                    ? $this->mqttTokenExpiresAt - time()
+                    : null,
+                'login_expires_at' => $this->loginTokenExpiresAt
+                    ? date('Y-m-d H:i:s', $this->loginTokenExpiresAt)
+                    : 'unknown',
+                'safety_margin' => $this->tokenCheckSafetyMargin
+            ]);
+
+            // Trigger full re-authentication
+            $this->reconnect(true);
+        } else {
+            $this->logger->debug('Tokens still valid', [
+                'mqtt_ttl_remaining' => $this->mqttTokenExpiresAt
+                    ? $this->mqttTokenExpiresAt - time()
+                    : null
+            ]);
+        }
     }
 
     /**
