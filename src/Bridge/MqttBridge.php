@@ -262,19 +262,38 @@ class MqttBridge
      */
     private function checkDataFlow(): void
     {
+        // Get all update stats for detailed logging
+        $allStats = $this->metrics->getAllSpontaneousUpdateStats();
         $staleDevices = $this->metrics->getStaleDevices($this->watchdogThreshold);
 
+        $totalDevices = count($allStats);
+        $activeDevices = $totalDevices - count($staleDevices);
+
         if (empty($staleDevices)) {
-            $this->logger->debug('Data flow watchdog: All devices active');
+            $this->logger->debug('Data flow watchdog: All devices active', [
+                'total_devices' => $totalDevices,
+                'active_devices' => $activeDevices,
+                'threshold' => $this->watchdogThreshold . 's'
+            ]);
             return;
         }
 
+        // Build detailed stale device info
+        $staleInfo = [];
+        foreach ($staleDevices as $mac => $secondsSince) {
+            $staleInfo[] = sprintf(
+                '%s (last update: %s ago)',
+                $mac,
+                gmdate('H:i:s', (int)$secondsSince)
+            );
+        }
+
         $this->logger->warning('Data flow watchdog: Stale devices detected', [
+            'total_devices' => $totalDevices,
+            'active_devices' => $activeDevices,
             'stale_count' => count($staleDevices),
-            'stale_devices' => array_map(
-                fn($seconds) => gmdate('H:i:s', (int)$seconds),
-                $staleDevices
-            )
+            'stale_devices' => $staleInfo,
+            'threshold' => $this->watchdogThreshold . 's'
         ]);
 
         // Trigger reconnection for all cloud clients
@@ -1040,19 +1059,47 @@ class MqttBridge
             return;
         }
 
+        // Calculate seconds since last update for watchdog monitoring
+        $now = time();
         foreach ($allStats as $mac => $stats) {
             if ($stats['count'] === 0) {
                 continue;
             }
 
-            $this->logger->info('Spontaneous update stats', [
+            // Get time since last update for watchdog context
+            $staleDevices = $this->metrics->getStaleDevices($this->watchdogThreshold);
+            $secondsSinceUpdate = isset($staleDevices[$mac]) ? $staleDevices[$mac] : null;
+
+            $logData = [
                 'mac' => $mac,
                 'intervals_tracked' => $stats['count'],
                 'min_seconds' => $stats['min'],
                 'max_seconds' => $stats['max'],
                 'avg_seconds' => $stats['avg'],
                 'last_seconds' => $stats['last']
-            ]);
+            ];
+
+            // Add watchdog status
+            if ($secondsSinceUpdate !== null) {
+                $logData['watchdog_status'] = 'STALE';
+                $logData['seconds_since_update'] = $secondsSinceUpdate;
+            } elseif ($secondsSinceUpdate === null && count($allStats) > 0) {
+                // Device has updates tracked, calculate actual time since last
+                $lastUpdateTime = $this->metrics->getStaleDevices(0);
+                if (isset($lastUpdateTime[$mac])) {
+                    $timeSince = $lastUpdateTime[$mac];
+                    $warningThreshold = (int)($this->watchdogThreshold * 0.7); // 70% of threshold
+
+                    if ($timeSince > $warningThreshold) {
+                        $logData['watchdog_status'] = 'WARNING';
+                        $logData['seconds_since_update'] = $timeSince;
+                    } else {
+                        $logData['watchdog_status'] = 'OK';
+                    }
+                }
+            }
+
+            $this->logger->info('Spontaneous update stats', $logData);
         }
     }
 
