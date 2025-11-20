@@ -77,7 +77,7 @@ class MqttBridge
     // Data flow watchdog
     private ?TimerInterface $watchdogTimer = null;
     private int $watchdogInterval = 120;        // Check every 2 minutes
-    private int $watchdogThreshold = 600;       // Alert if no updates for 10 minutes
+    private int $watchdogThreshold = 900;       // Alert if no updates for 15 minutes (fallback for polling)
     private bool $watchdogEnabled = true;
 
     public function __construct(
@@ -130,7 +130,7 @@ class MqttBridge
             $watchdogConfig = $this->config['bridge']['data_flow_watchdog'];
             $this->watchdogEnabled = $watchdogConfig['enabled'] ?? true;
             $this->watchdogInterval = $watchdogConfig['check_interval'] ?? 120;
-            $this->watchdogThreshold = $watchdogConfig['stale_threshold'] ?? 600;
+            $this->watchdogThreshold = $watchdogConfig['stale_threshold'] ?? 900;
         }
     }
 
@@ -584,20 +584,27 @@ class MqttBridge
                 // Start data flow watchdog
                 $this->startDataFlowWatchdog();
 
-                // Polling disabled - device sends spontaneous updates every ~3 minutes
-                // Test results:
-                //   5s:  Rate-limited (no responses)
-                //   10s: Rate-limited (no responses)
-                //   30s: Works (4s response time)
-                // Conclusion: Rate-limit is ~20-25s, but spontaneous updates sufficient
-                //
-                // NOTE: Official app uses Bluetooth for real-time updates (not cloud MQTT)
+                // Start device state polling if configured
+                // Devices don't send spontaneous cloud updates reliably (only 1-2 per day)
+                // Official app uses Bluetooth for real-time data, not cloud MQTT
+                // Polling is necessary to get regular SoC and state updates
+                // Rate limit: ~20-25s minimum interval (30s+ recommended)
+                $pollInterval = $this->config['bridge']['device_poll_interval'] ?? null;
+                if ($pollInterval !== null) {
+                    $this->pollingTimer = $this->loop->addPeriodicTimer(
+                        $pollInterval,
+                        fn() => $this->pollDeviceStates()
+                    );
+                    $pollingStatus = "enabled ({$pollInterval}s interval)";
+                } else {
+                    $pollingStatus = 'disabled (spontaneous updates only)';
+                }
 
                 $this->logger->info('Periodic timers started', [
                     'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
                     'update_stats_interval' => 60,
                     'holding_registers_interval' => 300,
-                    'polling' => 'disabled (spontaneous updates every ~3min)'
+                    'device_polling' => $pollingStatus
                 ]);
             })
             ->otherwise(function (Exception $e) {

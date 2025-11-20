@@ -43,6 +43,8 @@
 
   "bridge": {
     "status_publish_interval": 30,
+    "device_poll_interval": 60,
+    "_comment_device_poll_interval": "Poll device state every 60s (devices don't send spontaneous cloud updates)",
     "reconnect_delay_min": 5,
     "reconnect_delay_max": 60,
     "proactive_token_refresh": {
@@ -54,12 +56,12 @@
       "_comment_safety_margin": "Refresh if token expires within 1 hour (3600s)"
     },
     "data_flow_watchdog": {
-      "_comment": "Detect stale device connections by monitoring data flow",
+      "_comment": "Detect stale device connections by monitoring data flow (fallback for polling)",
       "enabled": true,
       "check_interval": 120,
       "_comment_check_interval": "Check every 2 minutes (120s)",
-      "stale_threshold": 600,
-      "_comment_stale_threshold": "Trigger reconnect if no updates for 10 minutes (600s)"
+      "stale_threshold": 900,
+      "_comment_stale_threshold": "Trigger reconnect if no updates for 15 minutes (900s)"
     }
   },
 
