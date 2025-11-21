@@ -317,8 +317,9 @@ class AsyncCloudClient extends EventEmitter
 
         $this->connected = false;
 
-        // Reconnect with existing tokens
+        // Reconnect with existing tokens, refresh device list to get updated subscriptions
         return $this->connectMqtt()
+            ->then(fn(): PromiseInterface => $this->refreshDeviceList())
             ->then(fn(): PromiseInterface => $this->resubscribeToDevices());
     }
 
@@ -340,10 +341,10 @@ class AsyncCloudClient extends EventEmitter
         $this->connected = false;
         $this->clearAuthTokens();
 
-        // Full authentication flow (same as initial connect())
+        // Full authentication flow with fresh device list (invalidate cache)
         return $this->authenticate()
             ->then(fn(): PromiseInterface => $this->connectMqtt())
-            ->then(fn(): PromiseInterface => $this->discoverDevices());
+            ->then(fn(): PromiseInterface => $this->refreshDeviceList());
     }
 
     /**

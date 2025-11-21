@@ -584,27 +584,25 @@ class MqttBridge
                 // Start data flow watchdog
                 $this->startDataFlowWatchdog();
 
-                // Start device state polling if configured
-                // Devices don't send spontaneous cloud updates reliably (only 1-2 per day)
+                // Device state polling disabled
+                // Devices send event-based updates (on actual state changes)
                 // Official app uses Bluetooth for real-time data, not cloud MQTT
-                // Polling is necessary to get regular SoC and state updates
-                // Rate limit: ~20-25s minimum interval (30s+ recommended)
-                $pollInterval = $this->config['bridge']['device_poll_interval'] ?? null;
-                if ($pollInterval !== null) {
-                    $this->pollingTimer = $this->loop->addPeriodicTimer(
-                        $pollInterval,
-                        fn() => $this->pollDeviceStates()
-                    );
-                    $pollingStatus = "enabled ({$pollInterval}s interval)";
-                } else {
-                    $pollingStatus = 'disabled (spontaneous updates only)';
-                }
+                // Data flow watchdog will trigger reconnect if no updates received
+                // Rate limit for polling: ~20-25s minimum interval (if ever needed again)
+                //
+                // $pollInterval = $this->config['bridge']['device_poll_interval'] ?? null;
+                // if ($pollInterval !== null) {
+                //     $this->pollingTimer = $this->loop->addPeriodicTimer(
+                //         $pollInterval,
+                //         fn() => $this->pollDeviceStates()
+                //     );
+                // }
 
                 $this->logger->info('Periodic timers started', [
                     'status_interval' => $this->config['bridge']['status_publish_interval'] ?? 60,
                     'update_stats_interval' => 60,
                     'holding_registers_interval' => 300,
-                    'device_polling' => $pollingStatus
+                    'device_polling' => 'disabled (event-based updates only)'
                 ]);
             })
             ->otherwise(function (Exception $e) {
