@@ -46,7 +46,9 @@ final class Config
     public static function getMqttHost(): string
     {
         self::ensureInitialized();
-        return $_ENV['FOSSIBOT_DEV_MODE'] ?? false ? "dev.mqtt.sydpower.com" : "mqtt.sydpower.com";
+        return $_ENV['FOSSIBOT_DEV_MODE'] ?? false
+            ? "dev.emqx1-cluster1.sydpower.com"
+            : "pro.emqx1-cluster1.sydpower.com";
     }
 
     public static function getMqttPort(): int
