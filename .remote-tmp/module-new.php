@@ -192,9 +192,12 @@ class FossibotLocalControl extends IPSModule
 
         $queue = $this->getQueue();
 
-        // Queue AC ON command (will be sent immediately as first command)
+        // Queue AC ON command
         $queue->enqueue(AcOutputCommand::enable());
 
-        IPS_LogMessage('FBLC', 'Test command queued and sent');
+        // Start timer to process queue
+        $this->SetTimerInterval('QueueTimer', 200);
+
+        IPS_LogMessage('FBLC', 'Test command queued, timer started');
     }
 }

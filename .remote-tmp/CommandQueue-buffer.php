@@ -5,6 +5,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/mqtt_helper.php';
+
 class CommandQueue
 {
     private const QUEUE_DELAY_MS = 200;
@@ -13,8 +15,8 @@ class CommandQueue
         private readonly int $mqttServerId,
         private readonly string $deviceMac,
         private readonly int $moduleId,
-        private readonly callable $getBufferFn,
-        private readonly callable $setBufferFn
+        private readonly \Closure $getBufferFn,
+        private readonly \Closure $setBufferFn
     ) {
     }
 

@@ -24,7 +24,8 @@
       "Bash(ssh:*)",
       "Bash(scp module-new.php frasier:/srv/docker/ipsymcon/mounts/data/modules/FossibotLocalControl/FossibotLocalControl/module.php)",
       "Bash(curl:*)",
-      "Bash(jq:*)"
+      "Bash(jq:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []
