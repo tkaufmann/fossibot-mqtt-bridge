@@ -188,16 +188,16 @@ class FossibotLocalControl extends IPSModule
      */
     public function TestQueue(): void
     {
-        require_once __DIR__ . '/libs/Commands/AcOutputCommand.php';
+        require_once __DIR__ . '/libs/Commands/DcOutputCommand.php';
 
         $queue = $this->getQueue();
 
-        // Queue AC ON command
-        $queue->enqueue(AcOutputCommand::enable());
+        // Queue DC ON command (for testing - AC was already on)
+        $queue->enqueue(DcOutputCommand::enable());
 
         // Start timer to process queue
         $this->SetTimerInterval('QueueTimer', 200);
 
-        IPS_LogMessage('FBLC', 'Test command queued, timer started');
+        IPS_LogMessage('FBLC', 'DC Output ON command queued, timer started');
     }
 }

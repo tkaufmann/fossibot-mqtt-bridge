@@ -6,6 +6,7 @@ docker-compose.yml
 logs/
 mounts/
 *.log
+.remote-tmp/
 
 # Test files
 test_*.php
